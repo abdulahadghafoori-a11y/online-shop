@@ -1,4 +1,8 @@
 import { sha256 } from "./hash";
+import {
+  isMetaLocalDevelopment,
+  metaTestEventCodeForCurrentEnvironment,
+} from "./metaTestEvents";
 
 type CAPIEventName = "InitiateCheckout" | "Purchase";
 
@@ -26,6 +30,14 @@ export async function sendCAPIEvent(payload: CAPIPayload): Promise<{
 
   if (!pixelId || !token) {
     console.warn("CAPI: missing META_PIXEL_ID or META_CONVERSIONS_API_TOKEN");
+    return { ok: false };
+  }
+
+  const testEventCode = metaTestEventCodeForCurrentEnvironment();
+  if (isMetaLocalDevelopment() && !testEventCode) {
+    console.warn(
+      "CAPI skipped: set META_TEST_EVENT_CODE in .env.local so local dev only sends Meta test events."
+    );
     return { ok: false };
   }
 
@@ -57,8 +69,7 @@ export async function sendCAPIEvent(payload: CAPIPayload): Promise<{
   }
 
   const body: Record<string, unknown> = { data: [event] };
-  const testCode = process.env.META_TEST_EVENT_CODE;
-  if (testCode) body.test_event_code = testCode;
+  if (testEventCode) body.test_event_code = testEventCode;
 
   const url = `https://graph.facebook.com/${version}/${pixelId}/events?access_token=${encodeURIComponent(token)}`;
 
