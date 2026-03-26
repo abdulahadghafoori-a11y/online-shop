@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import Script from "next/script";
 import {
-  isMetaLocalDevelopment,
-  metaTestEventCodeForCurrentEnvironment,
+  getMetaCapiMode,
+  getMetaTestEventCodeFromEnv,
 } from "@/lib/metaTestEvents";
 import "./globals.css";
 
@@ -28,16 +28,17 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   const pixelId = process.env.NEXT_PUBLIC_META_PIXEL_ID;
-  const devMeta = isMetaLocalDevelopment();
-  const metaTestCode = metaTestEventCodeForCurrentEnvironment();
+  const mode = getMetaCapiMode();
+  const testCode = getMetaTestEventCodeFromEnv();
+
   const loadPixel =
-    Boolean(pixelId) && (!devMeta || Boolean(metaTestCode));
+    Boolean(pixelId) && mode !== "disabled";
 
   const fbqInit = (() => {
     if (!pixelId) return "";
     const idLit = JSON.stringify(pixelId);
-    if (metaTestCode) {
-      return `fbq('init',${idLit},${JSON.stringify({ test_event_code: metaTestCode })});fbq('track','PageView');`;
+    if (mode === "test" && testCode) {
+      return `fbq('init',${idLit},${JSON.stringify({ test_event_code: testCode })});fbq('track','PageView');`;
     }
     return `fbq('init',${idLit});fbq('track','PageView');`;
   })();

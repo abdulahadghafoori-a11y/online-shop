@@ -10,6 +10,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
+import { useAppCurrency } from "@/components/dashboard/CurrencyProvider";
 
 const badge: Record<string, string> = {
   SCALE:
@@ -20,6 +21,7 @@ const badge: Record<string, string> = {
 };
 
 export function ScalingTable() {
+  const { formatMoney } = useAppCurrency();
   const [rows, setRows] = useState<ScalingRow[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -60,7 +62,7 @@ export function ScalingTable() {
                       {row.campaignname}
                     </td>
                     <td className="py-2 text-right tabular-nums text-muted-foreground">
-                      ${row.spend.toFixed(0)}
+                      {formatMoney(row.spend)}
                     </td>
                     <td className="py-2 text-right tabular-nums text-muted-foreground">
                       {row.roas.toFixed(2)}×
@@ -73,7 +75,7 @@ export function ScalingTable() {
                           : "text-destructive"
                       )}
                     >
-                      ${row.profit.toFixed(0)}
+                      {formatMoney(row.profit)}
                     </td>
                     <td className="py-2 text-center">
                       <span

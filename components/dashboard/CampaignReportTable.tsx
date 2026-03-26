@@ -11,6 +11,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { useAppCurrency } from "@/components/dashboard/CurrencyProvider";
 
 interface Row {
   campaignid: string;
@@ -24,6 +25,7 @@ interface Row {
 }
 
 export function CampaignReportTable() {
+  const { formatMoney } = useAppCurrency();
   const to = new Date().toISOString().split("T")[0];
   const from = new Date(Date.now() - 30 * 864e5).toISOString().split("T")[0];
   const [fromDate, setFromDate] = useState(from);
@@ -95,20 +97,20 @@ export function CampaignReportTable() {
                 <tr key={r.campaignid}>
                   <td className="py-2 font-medium">{r.campaignname}</td>
                   <td className="py-2 text-right tabular-nums">
-                    ${Number(r.spend).toFixed(2)}
+                    {formatMoney(Number(r.spend))}
                   </td>
                   <td className="py-2 text-right tabular-nums">
-                    ${Number(r.revenue).toFixed(2)}
+                    {formatMoney(Number(r.revenue))}
                   </td>
                   <td className="py-2 text-right font-medium tabular-nums">
-                    ${Number(r.profit).toFixed(2)}
+                    {formatMoney(Number(r.profit))}
                   </td>
                   <td className="py-2 text-right tabular-nums">{r.orders}</td>
                   <td className="py-2 text-right tabular-nums">
                     {Number(r.roas).toFixed(2)}×
                   </td>
                   <td className="py-2 text-right tabular-nums">
-                    ${Number(r.cpa).toFixed(2)}
+                    {formatMoney(Number(r.cpa))}
                   </td>
                 </tr>
               ))}

@@ -1,4 +1,8 @@
 import { createClient } from "@/lib/supabaseServer";
+import { getAppCurrency } from "@/lib/appCurrencyServer";
+import { getAmountBaseCurrency } from "@/lib/amountConversion";
+import { getCachedUsdAfnRate } from "@/lib/exchangeRates";
+import { formatDbMoney } from "@/lib/formatDbMoney";
 import {
   Card,
   CardContent,
@@ -9,6 +13,11 @@ import {
 
 export default async function ExpensesPage() {
   const supabase = await createClient();
+  const [currency, fx] = await Promise.all([
+    getAppCurrency(),
+    getCachedUsdAfnRate(),
+  ]);
+  const amountBase = getAmountBaseCurrency();
   const { data: expenses } = await supabase
     .from("expenses")
     .select("id, category, amount, date, notes")
@@ -49,7 +58,12 @@ export default async function ExpensesPage() {
                       {e.notes ?? "—"}
                     </td>
                     <td className="py-2 text-right tabular-nums">
-                      ${Number(e.amount).toFixed(2)}
+                      {formatDbMoney(
+                        Number(e.amount),
+                        currency,
+                        amountBase,
+                        fx.afnPerUsd
+                      )}
                     </td>
                   </tr>
                 ))}

@@ -1,8 +1,5 @@
 import { sha256 } from "./hash";
-import {
-  isMetaLocalDevelopment,
-  metaTestEventCodeForCurrentEnvironment,
-} from "./metaTestEvents";
+import { resolveMetaCapiGating } from "./metaTestEvents";
 
 type CAPIEventName = "InitiateCheckout" | "Purchase";
 
@@ -24,7 +21,8 @@ export async function sendCAPIEvent(payload: CAPIPayload): Promise<{
   ok: boolean;
   response?: unknown;
 }> {
-  const pixelId = process.env.META_PIXEL_ID ?? process.env.NEXT_PUBLIC_META_PIXEL_ID;
+  const pixelId =
+    process.env.META_PIXEL_ID ?? process.env.NEXT_PUBLIC_META_PIXEL_ID;
   const token = process.env.META_CONVERSIONS_API_TOKEN;
   const version = process.env.META_API_VERSION ?? "v21.0";
 
@@ -33,10 +31,10 @@ export async function sendCAPIEvent(payload: CAPIPayload): Promise<{
     return { ok: false };
   }
 
-  const testEventCode = metaTestEventCodeForCurrentEnvironment();
-  if (isMetaLocalDevelopment() && !testEventCode) {
-    console.warn(
-      "CAPI skipped: set META_TEST_EVENT_CODE in .env.local so local dev only sends Meta test events."
+  const gating = resolveMetaCapiGating();
+  if (!gating.send) {
+    console.info(
+      `CAPI [${payload.eventName}] blocked by META_CAPI_MODE gating.`
     );
     return { ok: false };
   }
@@ -64,12 +62,14 @@ export async function sendCAPIEvent(payload: CAPIPayload): Promise<{
     event.custom_data = {
       value: payload.value,
       currency: payload.currency ?? process.env.CURRENCY ?? "USD",
-      ...(payload.contentIds?.length ? { content_ids: payload.contentIds } : {}),
+      ...(payload.contentIds?.length
+        ? { content_ids: payload.contentIds }
+        : {}),
     };
   }
 
   const body: Record<string, unknown> = { data: [event] };
-  if (testEventCode) body.test_event_code = testEventCode;
+  if (gating.testEventCode) body.test_event_code = gating.testEventCode;
 
   const url = `https://graph.facebook.com/${version}/${pixelId}/events?access_token=${encodeURIComponent(token)}`;
 

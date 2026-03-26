@@ -191,3 +191,33 @@ export interface ScalingRow extends CampaignReport {
   profitperorder: number;
   label: ScalingLabel;
 }
+
+export type PurchaseOrderStatus = "draft" | "received" | "cancelled";
+
+export interface PurchaseOrder {
+  id: string;
+  supplier_name: string;
+  status: PurchaseOrderStatus;
+  notes: string | null;
+  created_by: string | null;
+  created_at: string;
+  received_at: string | null;
+}
+
+export interface PurchaseOrderItem {
+  id: string;
+  purchase_order_id: string;
+  product_id: string;
+  quantity: number;
+  unit_cost: number;
+  created_at: string;
+}
+
+export interface StockAdjustment {
+  id: string;
+  product_id: string;
+  quantity: number;
+  reason: string;
+  created_by: string | null;
+  created_at: string;
+}

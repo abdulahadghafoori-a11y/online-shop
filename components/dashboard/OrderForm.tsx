@@ -1,7 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { OrderItemInput } from "@/types";
+import { roundMoney2 } from "@/lib/amountConversion";
+import { useAppCurrency } from "@/components/dashboard/CurrencyProvider";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -34,6 +36,9 @@ interface ItemRow extends OrderItemInput {
 }
 
 export function OrderForm({ products }: OrderFormProps) {
+  const { currency, displayToBase, baseToDisplay, convertDisplay } =
+    useAppCurrency();
+  const prevCurrencyRef = useRef(currency);
   const [phone, setPhone] = useState("");
   const [clickId, setClickId] = useState("");
   const [adId, setAdId] = useState("");
@@ -46,6 +51,23 @@ export function OrderForm({ products }: OrderFormProps) {
   const [result, setResult] = useState<{ ok: boolean; msg: string } | null>(
     null
   );
+
+  useEffect(() => {
+    const prev = prevCurrencyRef.current;
+    if (prev === currency) return;
+    setDeliveryCost((d) =>
+      String(
+        roundMoney2(convertDisplay(parseFloat(d) || 0, prev, currency))
+      )
+    );
+    setItems((rows) =>
+      rows.map((row) => ({
+        ...row,
+        saleprice: roundMoney2(convertDisplay(row.saleprice, prev, currency)),
+      }))
+    );
+    prevCurrencyRef.current = currency;
+  }, [currency, convertDisplay]);
 
   function addItem() {
     setItems((prev) => [
@@ -71,7 +93,9 @@ export function OrderForm({ products }: OrderFormProps) {
           return {
             ...i,
             productid: value as string,
-            saleprice: product?.defaultsaleprice ?? 0,
+            saleprice: roundMoney2(
+              baseToDisplay(product?.defaultsaleprice ?? 0)
+            ),
           };
         }
         return { ...i, [field]: field === "quantity" || field === "saleprice" ? Number(value) : value };
@@ -97,9 +121,9 @@ export function OrderForm({ products }: OrderFormProps) {
         items: items.map(({ productid, quantity, saleprice }) => ({
           productid,
           quantity,
-          saleprice,
+          saleprice: displayToBase(Number(saleprice) || 0),
         })),
-        deliverycost: parseFloat(deliveryCost) || 0,
+        deliverycost: displayToBase(parseFloat(deliveryCost) || 0),
         clickid: clickId.trim() || undefined,
         adid: adId.trim() || undefined,
         status,
@@ -126,8 +150,9 @@ export function OrderForm({ products }: OrderFormProps) {
       <CardHeader>
         <CardTitle>Order details</CardTitle>
         <CardDescription>
-          Line-level COGS are snapshotted from the latest{" "}
-          <code className="text-xs">productcosts</code> row at order time.
+          Prices and delivery are in your sidebar currency; they are converted to{" "}
+          <code className="text-xs">AMOUNT_BASE_CURRENCY</code> before save. COGS
+          comes from the latest <code className="text-xs">productcosts</code> row.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -209,7 +234,7 @@ export function OrderForm({ products }: OrderFormProps) {
                     />
                   </div>
                   <div className="w-28 space-y-2">
-                    <Label>Price</Label>
+                    <Label>Price ({currency})</Label>
                     <Input
                       required
                       type="number"
@@ -242,7 +267,7 @@ export function OrderForm({ products }: OrderFormProps) {
 
           <section className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="space-y-2">
-              <Label htmlFor="delivery">Delivery cost</Label>
+              <Label htmlFor="delivery">Delivery cost ({currency})</Label>
               <Input
                 id="delivery"
                 type="number"

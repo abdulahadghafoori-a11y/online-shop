@@ -4,7 +4,7 @@ import { resolveAttribution } from "@/lib/attribution";
 import { sendCAPIEvent } from "@/lib/metaConversions";
 import { createServiceClient } from "@/lib/supabaseServer";
 import { parseUuid } from "@/lib/uuid";
-import type { CreateOrderPayload } from "@/types";
+import { CreateOrderSchema } from "@/lib/validation";
 
 export async function POST(req: NextRequest) {
   try {
@@ -13,22 +13,41 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const body = (await req.json()) as CreateOrderPayload;
-    if (!body.phone?.trim()) {
-      return NextResponse.json({ error: "Phone required" }, { status: 400 });
+    const raw = await req.json();
+    const parsed = CreateOrderSchema.safeParse(raw);
+    if (!parsed.success) {
+      const msg = parsed.error.issues.map((i) => i.message).join("; ");
+      return NextResponse.json({ error: msg }, { status: 400 });
     }
-    if (!body.items?.length) {
-      return NextResponse.json({ error: "At least one line item required" }, { status: 400 });
-    }
+    const body = parsed.data;
 
     const supabase = createServiceClient();
     const now = new Date();
     const createdby = await getAppUserIdForAuthUser(user.id);
 
+    const productIds = body.items.map((i) => i.productid);
+    const { data: validProducts } = await supabase
+      .from("products")
+      .select("id")
+      .in("id", productIds)
+      .eq("isactive", true);
+
+    const validIds = new Set((validProducts ?? []).map((p) => p.id));
+    const invalid = productIds.filter((id) => !validIds.has(id));
+    if (invalid.length > 0) {
+      return NextResponse.json(
+        { error: `Invalid or inactive product(s): ${invalid.join(", ")}` },
+        { status: 400 }
+      );
+    }
+
     const adidOverride = parseUuid(body.adid?.trim() ?? null);
 
     const attribution = await resolveAttribution({
-      ...body,
+      phone: body.phone,
+      items: body.items,
+      deliverycost: body.deliverycost,
+      clickid: body.clickid,
       adid: adidOverride ?? undefined,
       ordertime: now,
     });
@@ -58,8 +77,8 @@ export async function POST(req: NextRequest) {
         clickid: attribution.clickid,
         adid: attribution.adid,
         campaignid: attribution.campaignid,
-        deliverycost: body.deliverycost ?? 0,
-        status: body.status ?? "pending",
+        deliverycost: body.deliverycost,
+        status: body.status,
         attributionmethod: attribution.method,
         confidencescore: attribution.confidence,
         allocatedadspend: 0,
@@ -82,15 +101,17 @@ export async function POST(req: NextRequest) {
 
     if (itemsError) throw itemsError;
 
-    const { error: invError } = await supabase.from("inventorytransactions").insert(
-      itemsWithCost.map((item) => ({
-        productid: item.productid,
-        type: "sale" as const,
-        quantity: -item.quantity,
-        unitcost: item.unitcost,
-        referenceid: order.id,
-      }))
-    );
+    const { error: invError } = await supabase
+      .from("inventorytransactions")
+      .insert(
+        itemsWithCost.map((item) => ({
+          productid: item.productid,
+          type: "sale" as const,
+          quantity: -item.quantity,
+          unitcost: item.unitcost,
+          referenceid: order.id,
+        }))
+      );
 
     if (invError) throw invError;
 
