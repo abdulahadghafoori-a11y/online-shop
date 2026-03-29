@@ -4,16 +4,18 @@ import {
   baseAmountToDisplay,
   roundMoney2,
 } from "@/lib/amountConversion";
+import { fxRatesFromSnapshot, type FxSnapshot } from "@/lib/exchangeRates";
 
 /** Format a DB (base-currency) amount in the chosen display currency. */
 export function formatDbMoney(
   amountInBase: number,
   display: AppCurrencyCode,
   base: AmountBaseCode,
-  afnPerUsd: number
+  snapshot: FxSnapshot
 ): string {
+  const fx = fxRatesFromSnapshot(snapshot);
   const displayAmt = roundMoney2(
-    baseAmountToDisplay(amountInBase, display, base, afnPerUsd)
+    baseAmountToDisplay(amountInBase, display, base, fx)
   );
   return formatAppMoney(displayAmt, display);
 }

@@ -4,11 +4,16 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabaseServer";
 import { allocateUniqueProductSku } from "@/lib/productSku";
 import { displayInputToBaseAmount } from "@/lib/formMoneyServer";
+import { CreateProductSchema, UpdateProductSchema } from "@/lib/validation";
 
 export type ProductActionState = {
   error?: string;
   ok?: boolean;
 };
+
+function zodIssuesMessage(err: { issues: { message: string }[] }) {
+  return err.issues.map((i) => i.message).join("; ");
+}
 
 export async function createProductAction(
   _prev: ProductActionState,
@@ -20,8 +25,20 @@ export async function createProductAction(
   const isActive = formData.get("isactive") === "true";
   const initialCostRaw = String(formData.get("initialunitcost") ?? "").trim();
 
-  if (!name) {
-    return { error: "Name is required." };
+  const initialunitcost =
+    initialCostRaw.length > 0
+      ? parseFloat(initialCostRaw.replace(/,/g, ""))
+      : undefined;
+
+  const validated = CreateProductSchema.safeParse({
+    name,
+    defaultsaleprice: parseFloat(priceRaw.replace(/,/g, "")),
+    isactive: isActive,
+    initialunitcost,
+  });
+
+  if (!validated.success) {
+    return { error: zodIssuesMessage(validated.error) };
   }
 
   const skuAlloc = await allocateUniqueProductSku(supabase);
@@ -48,10 +65,12 @@ export async function createProductAction(
   const { data: inserted, error: insertErr } = await supabase
     .from("products")
     .insert({
-      name,
+      name: validated.data.name,
       sku,
       defaultsaleprice,
-      isactive: isActive,
+      isactive: validated.data.isactive,
+      avg_cost: initialUnitcost ?? 0,
+      stock_on_hand: 0,
     })
     .select("id")
     .single();
@@ -89,9 +108,17 @@ export async function updateProductAction(
   const priceRaw = String(formData.get("defaultsaleprice") ?? "");
   const isActive = formData.get("isactive") === "true";
 
-  if (!id || !name) {
-    return { error: "Missing product or required fields." };
+  const validated = UpdateProductSchema.safeParse({
+    id,
+    name,
+    defaultsaleprice: parseFloat(priceRaw.replace(/,/g, "")),
+    isactive: isActive,
+  });
+
+  if (!validated.success) {
+    return { error: zodIssuesMessage(validated.error) };
   }
+
   const priceInBase = await displayInputToBaseAmount(priceRaw);
   if (!priceInBase.ok) {
     return { error: "Enter a valid default sale price." };
@@ -101,46 +128,17 @@ export async function updateProductAction(
   const { error } = await supabase
     .from("products")
     .update({
-      name,
+      name: validated.data.name,
       defaultsaleprice,
-      isactive: isActive,
+      isactive: validated.data.isactive,
     })
-    .eq("id", id);
+    .eq("id", validated.data.id);
 
   if (error) {
     return { error: error.message };
   }
 
   revalidatePath("/dashboard/products");
-  return { ok: true };
-}
-
-export async function addProductCostAction(
-  _prev: ProductActionState,
-  formData: FormData
-): Promise<ProductActionState> {
-  const supabase = await createClient();
-  const productid = String(formData.get("productid") ?? "").trim();
-  const costRaw = String(formData.get("unitcost") ?? "");
-
-  if (!productid) {
-    return { error: "Missing product." };
-  }
-  const costInBase = await displayInputToBaseAmount(costRaw);
-  if (!costInBase.ok) {
-    return { error: "Enter a valid unit cost." };
-  }
-  const unitcost = costInBase.value;
-
-  const { error } = await supabase.from("productcosts").insert({
-    productid,
-    unitcost,
-  });
-
-  if (error) {
-    return { error: error.message };
-  }
-
-  revalidatePath("/dashboard/products");
+  revalidatePath(`/dashboard/products/${validated.data.id}`);
   return { ok: true };
 }

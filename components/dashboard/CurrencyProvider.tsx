@@ -13,6 +13,7 @@ import { useRouter } from "next/navigation";
 import {
   type AppCurrencyCode,
   formatAppMoney,
+  getCurrencySymbol,
   normalizeAppCurrency,
 } from "@/lib/currency";
 import {
@@ -22,11 +23,12 @@ import {
   displayAmountToBase,
   roundMoney2,
 } from "@/lib/amountConversion";
-import type { FxSnapshot } from "@/lib/exchangeRates";
+import { fxRatesFromSnapshot, type FxSnapshot } from "@/lib/exchangeRates";
 import { setAppCurrencyAction } from "@/app/dashboard/currency-actions";
 
 type CurrencyContextValue = {
   currency: AppCurrencyCode;
+  currencySymbol: string;
   amountBaseCurrency: AmountBaseCode;
   fx: FxSnapshot;
   formatMoney: (amountInBase: number) => string;
@@ -81,64 +83,51 @@ export function CurrencyProvider({
     [router]
   );
 
+  const fxRates = useMemo(() => fxRatesFromSnapshot(fx), [fx]);
+
   const displayToBase = useCallback(
     (amountInDisplay: number) =>
       roundMoney2(
-        displayAmountToBase(
-          amountInDisplay,
-          currency,
-          amountBaseCurrency,
-          fx.afnPerUsd
-        )
+        displayAmountToBase(amountInDisplay, currency, amountBaseCurrency, fxRates)
       ),
-    [currency, amountBaseCurrency, fx.afnPerUsd]
+    [currency, amountBaseCurrency, fxRates]
   );
 
   const baseToDisplay = useCallback(
     (amountInBase: number) =>
       roundMoney2(
-        baseAmountToDisplay(
-          amountInBase,
-          currency,
-          amountBaseCurrency,
-          fx.afnPerUsd
-        )
+        baseAmountToDisplay(amountInBase, currency, amountBaseCurrency, fxRates)
       ),
-    [currency, amountBaseCurrency, fx.afnPerUsd]
+    [currency, amountBaseCurrency, fxRates]
   );
 
   const convertDisplay = useCallback(
     (amount: number, from: AppCurrencyCode, to: AppCurrencyCode) =>
       roundMoney2(
-        convertBetweenDisplay(
-          amount,
-          from,
-          to,
-          amountBaseCurrency,
-          fx.afnPerUsd
-        )
+        convertBetweenDisplay(amount, from, to, amountBaseCurrency, fxRates)
       ),
-    [amountBaseCurrency, fx.afnPerUsd]
+    [amountBaseCurrency, fxRates]
   );
 
   const formatMoney = useCallback(
     (amountInBase: number) => {
       const displayAmt = roundMoney2(
-        baseAmountToDisplay(
-          amountInBase,
-          currency,
-          amountBaseCurrency,
-          fx.afnPerUsd
-        )
+        baseAmountToDisplay(amountInBase, currency, amountBaseCurrency, fxRates)
       );
       return formatAppMoney(displayAmt, currency);
     },
-    [currency, amountBaseCurrency, fx.afnPerUsd]
+    [currency, amountBaseCurrency, fxRates]
+  );
+
+  const currencySymbol = useMemo(
+    () => getCurrencySymbol(currency),
+    [currency]
   );
 
   const value = useMemo(
     () => ({
       currency,
+      currencySymbol,
       amountBaseCurrency,
       fx,
       formatMoney,
@@ -150,6 +139,7 @@ export function CurrencyProvider({
     }),
     [
       currency,
+      currencySymbol,
       amountBaseCurrency,
       fx,
       formatMoney,

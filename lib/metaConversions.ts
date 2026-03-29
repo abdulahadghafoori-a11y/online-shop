@@ -1,4 +1,10 @@
+import { getAmountBaseCurrency } from "@/lib/amountConversion";
 import { sha256 } from "./hash";
+import {
+  capiPayloadSummary,
+  insertMetaEventLog,
+  updateMetaEventLog,
+} from "./metaEventLog";
 import { resolveMetaCapiGating } from "./metaTestEvents";
 
 type CAPIEventName = "InitiateCheckout" | "Purchase";
@@ -14,6 +20,10 @@ export interface CAPIPayload {
   userAgent?: string | null;
   phone?: string | null;
   contentIds?: string[];
+  /** For Purchase — stored on meta_event_logs.order_id */
+  orderId?: string | null;
+  /** For InitiateCheckout — stored on meta_event_logs.click_id (often same as eventId) */
+  clickId?: string | null;
 }
 
 /** Meta Graph Conversions API — snake_case keys per Graph API. */
@@ -26,18 +36,57 @@ export async function sendCAPIEvent(payload: CAPIPayload): Promise<{
   const token = process.env.META_CONVERSIONS_API_TOKEN;
   const version = process.env.META_API_VERSION ?? "v21.0";
 
+  const gatingOnce = resolveMetaCapiGating();
+  const testMode = Boolean(gatingOnce.testEventCode);
+
+  const orderId = payload.orderId ?? null;
+  const clickId =
+    payload.clickId ??
+    (payload.eventName === "InitiateCheckout" ? payload.eventId : null);
+
+  const baseLog = {
+    order_id: orderId,
+    click_id: clickId,
+    event_name: payload.eventName,
+    event_id: payload.eventId,
+    test_mode: testMode,
+  };
+
+  async function logSkipped(
+    reason: string,
+    extra?: Record<string, unknown>
+  ): Promise<void> {
+    await insertMetaEventLog({
+      ...baseLog,
+      payload: { ...capiPayloadSummary(payload), skip_reason: reason, ...extra },
+      test_mode: testMode,
+      status: "skipped",
+    });
+  }
+
   if (!pixelId || !token) {
+    await logSkipped("missing_credentials", {
+      has_pixel_id: Boolean(pixelId),
+      has_token: Boolean(token),
+    });
     console.warn("CAPI: missing META_PIXEL_ID or META_CONVERSIONS_API_TOKEN");
     return { ok: false };
   }
 
-  const gating = resolveMetaCapiGating();
-  if (!gating.send) {
+  if (!gatingOnce.send) {
+    await logSkipped("capi_mode_blocked");
     console.info(
       `CAPI [${payload.eventName}] blocked by META_CAPI_MODE gating.`
     );
     return { ok: false };
   }
+
+  const logId = await insertMetaEventLog({
+    ...baseLog,
+    payload: capiPayloadSummary(payload),
+    test_mode: testMode,
+    status: "pending",
+  });
 
   const user_data: Record<string, unknown> = {};
 
@@ -61,7 +110,7 @@ export async function sendCAPIEvent(payload: CAPIPayload): Promise<{
   if (payload.value !== undefined) {
     event.custom_data = {
       value: payload.value,
-      currency: payload.currency ?? process.env.CURRENCY ?? "USD",
+      currency: payload.currency ?? getAmountBaseCurrency(),
       ...(payload.contentIds?.length
         ? { content_ids: payload.contentIds }
         : {}),
@@ -69,7 +118,7 @@ export async function sendCAPIEvent(payload: CAPIPayload): Promise<{
   }
 
   const body: Record<string, unknown> = { data: [event] };
-  if (gating.testEventCode) body.test_event_code = gating.testEventCode;
+  if (gatingOnce.testEventCode) body.test_event_code = gatingOnce.testEventCode;
 
   const url = `https://graph.facebook.com/${version}/${pixelId}/events?access_token=${encodeURIComponent(token)}`;
 
@@ -80,8 +129,25 @@ export async function sendCAPIEvent(payload: CAPIPayload): Promise<{
       body: JSON.stringify(body),
     });
     const response = await res.json();
-    return { ok: res.ok, response };
+    const ok = res.ok;
+
+    if (logId) {
+      await updateMetaEventLog(logId, {
+        status: ok ? "sent" : "failed",
+        meta_response: response,
+        sent_at: new Date().toISOString(),
+      });
+    }
+
+    return { ok, response };
   } catch (err) {
+    if (logId) {
+      await updateMetaEventLog(logId, {
+        status: "failed",
+        meta_response: { error: String(err) },
+        sent_at: new Date().toISOString(),
+      });
+    }
     console.error("CAPI send error:", err);
     return { ok: false };
   }

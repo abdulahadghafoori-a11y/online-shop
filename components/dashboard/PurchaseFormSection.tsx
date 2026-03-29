@@ -1,6 +1,8 @@
 "use client";
 
 import { useActionState, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import { toast } from "sonner";
 import {
   createPurchaseOrderAction,
   receivePurchaseOrderAction,
@@ -20,7 +22,13 @@ import {
 import { Plus, Trash2 } from "lucide-react";
 
 type ProductOption = { id: string; name: string; sku: string };
-type LineItem = { productid: string; quantity: number; unitcost: string };
+type LineItem = {
+  productid: string;
+  quantity: number;
+  basecost: string;
+  shippingcost: string;
+  packagingcost: string;
+};
 
 const initial: PurchaseActionState = {};
 
@@ -29,9 +37,15 @@ export function PurchaseFormSection({
 }: {
   products: ProductOption[];
 }) {
-  const { currency } = useAppCurrency();
+  const { currencySymbol } = useAppCurrency();
   const [items, setItems] = useState<LineItem[]>([
-    { productid: "", quantity: 1, unitcost: "" },
+    {
+      productid: "",
+      quantity: 1,
+      basecost: "",
+      shippingcost: "",
+      packagingcost: "",
+    },
   ]);
   const [supplier, setSupplier] = useState("");
 
@@ -42,13 +56,35 @@ export function PurchaseFormSection({
 
   useEffect(() => {
     if (createState.ok) {
-      setItems([{ productid: "", quantity: 1, unitcost: "" }]);
+      setItems([
+        {
+          productid: "",
+          quantity: 1,
+          basecost: "",
+          shippingcost: "",
+          packagingcost: "",
+        },
+      ]);
       setSupplier("");
     }
   }, [createState.ok]);
 
+  useEffect(() => {
+    if (createState.error) toast.error(createState.error);
+    else if (createState.ok) toast.success("Purchase order created");
+  }, [createState]);
+
   const addLine = () =>
-    setItems((prev) => [...prev, { productid: "", quantity: 1, unitcost: "" }]);
+    setItems((prev) => [
+      ...prev,
+      {
+        productid: "",
+        quantity: 1,
+        basecost: "",
+        shippingcost: "",
+        packagingcost: "",
+      },
+    ]);
 
   const removeLine = (idx: number) =>
     setItems((prev) => prev.filter((_, i) => i !== idx));
@@ -63,7 +99,9 @@ export function PurchaseFormSection({
       <CardHeader>
         <CardTitle>New purchase order</CardTitle>
         <CardDescription>
-          Costs entered in {currency}. Create, then receive to update stock.
+          Actual landed unit cost per line: base + shipping + packaging (in{" "}
+          {currencySymbol}). Receive applies these to WAC. Product planning
+          fields are separate.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -72,7 +110,9 @@ export function PurchaseFormSection({
             const payload = items.map((it) => ({
               productid: it.productid,
               quantity: Number(it.quantity),
-              unitcost: Number(it.unitcost),
+              base_cost: Number(it.basecost) || 0,
+              shipping_cost_per_unit: Number(it.shippingcost) || 0,
+              packaging_cost_per_unit: Number(it.packagingcost) || 0,
             }));
             fd.set("items", JSON.stringify(payload));
             fd.set("suppliername", supplier);
@@ -96,9 +136,9 @@ export function PurchaseFormSection({
             {items.map((item, idx) => (
               <div
                 key={idx}
-                className="flex flex-wrap items-end gap-2 rounded-lg border p-3"
+                className="flex flex-col gap-3 rounded-lg border p-3 md:flex-row md:flex-wrap md:items-end"
               >
-                <div className="grid flex-1 gap-1 min-w-[160px]">
+                <div className="grid min-w-[180px] flex-1 gap-1">
                   <span className="text-muted-foreground text-xs">Product</span>
                   <select
                     value={item.productid}
@@ -116,32 +156,61 @@ export function PurchaseFormSection({
                     ))}
                   </select>
                 </div>
-                <div className="grid w-24 gap-1">
+                <div className="grid w-full gap-1 sm:w-24">
                   <span className="text-muted-foreground text-xs">Qty</span>
                   <Input
                     type="number"
-                    min={1}
-                    step={1}
+                    min={0.01}
+                    step="any"
                     value={item.quantity}
                     onChange={(e) =>
-                      updateLine(idx, { quantity: Number(e.target.value) })
+                      updateLine(idx, {
+                        quantity: Number(e.target.value),
+                      })
                     }
                     required
                   />
                 </div>
-                <div className="grid w-32 gap-1">
+                <div className="grid w-full min-w-[100px] flex-1 gap-1 sm:max-w-[140px]">
                   <span className="text-muted-foreground text-xs">
-                    Unit cost ({currency})
+                    Base / u ({currencySymbol})
                   </span>
                   <Input
                     type="number"
                     min={0}
                     step="0.01"
-                    value={item.unitcost}
+                    value={item.basecost}
                     onChange={(e) =>
-                      updateLine(idx, { unitcost: e.target.value })
+                      updateLine(idx, { basecost: e.target.value })
                     }
-                    required
+                  />
+                </div>
+                <div className="grid w-full min-w-[100px] flex-1 gap-1 sm:max-w-[140px]">
+                  <span className="text-muted-foreground text-xs">
+                    Ship / u ({currencySymbol})
+                  </span>
+                  <Input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={item.shippingcost}
+                    onChange={(e) =>
+                      updateLine(idx, { shippingcost: e.target.value })
+                    }
+                  />
+                </div>
+                <div className="grid w-full min-w-[100px] flex-1 gap-1 sm:max-w-[140px]">
+                  <span className="text-muted-foreground text-xs">
+                    Pack / u ({currencySymbol})
+                  </span>
+                  <Input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={item.packagingcost}
+                    onChange={(e) =>
+                      updateLine(idx, { packagingcost: e.target.value })
+                    }
                   />
                 </div>
                 {items.length > 1 && (
@@ -168,15 +237,6 @@ export function PurchaseFormSection({
             </Button>
           </div>
 
-          {createState.error && (
-            <p className="text-destructive text-sm">{createState.error}</p>
-          )}
-          {createState.ok && (
-            <p className="text-emerald-600 text-sm">
-              Purchase order created successfully.
-            </p>
-          )}
-
           <Button type="submit" disabled={createPending}>
             {createPending ? "Creating…" : "Create purchase order"}
           </Button>
@@ -187,17 +247,24 @@ export function PurchaseFormSection({
 }
 
 export function ReceiveButton({ poId }: { poId: string }) {
+  const router = useRouter();
   const [state, action, pending] = useActionState(
     receivePurchaseOrderAction,
     initial
   );
 
+  useEffect(() => {
+    if (state.ok) router.refresh();
+  }, [state.ok, router]);
+
+  useEffect(() => {
+    if (state.error) toast.error(state.error);
+    else if (state.ok) toast.success("Purchase received");
+  }, [state]);
+
   return (
     <form action={action}>
       <input type="hidden" name="id" value={poId} />
-      {state.error && (
-        <p className="text-destructive text-xs">{state.error}</p>
-      )}
       <Button type="submit" size="sm" variant="outline" disabled={pending}>
         {pending ? "Receiving…" : "Receive"}
       </Button>

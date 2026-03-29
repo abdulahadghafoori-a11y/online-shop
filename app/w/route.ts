@@ -55,6 +55,7 @@ export async function GET(req: NextRequest) {
   const capiPromise = sendCAPIEvent({
     eventName: "InitiateCheckout",
     eventId: clickid,
+    clickId: clickid,
     eventTime: Math.floor(Date.now() / 1000),
     fbclid,
     ipAddress: ip || null,

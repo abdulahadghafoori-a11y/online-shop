@@ -45,28 +45,30 @@ export async function createStockAdjustmentAction(
 
   if (!product) return { error: "Product not found" };
 
-  const { error: adjErr } = await supabase
+  const { data: inserted, error: adjErr } = await supabase
     .from("stock_adjustments")
     .insert({
       product_id: pid,
       quantity,
       reason: adjustReason,
       created_by: createdBy,
-    });
+    })
+    .select("id")
+    .single();
 
   if (adjErr) return { error: adjErr.message };
 
-  const { error: invErr } = await supabase
-    .from("inventorytransactions")
-    .insert({
-      productid: pid,
-      type: "adjustment" as const,
-      quantity,
-      unitcost: null,
-      referenceid: null,
-    });
+  const { error: invErr } = await supabase.rpc("apply_inventory_adjustment", {
+    p_product_id: pid,
+    p_qty_delta: quantity,
+    p_reference_id: inserted.id,
+  });
 
-  if (invErr) return { error: `Adjustment saved but inventory update failed: ${invErr.message}` };
+  if (invErr) {
+    return {
+      error: `Adjustment saved but stock update failed: ${invErr.message}`,
+    };
+  }
 
   revalidatePath("/dashboard/inventory");
   revalidatePath("/dashboard/products");

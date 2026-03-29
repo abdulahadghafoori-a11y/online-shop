@@ -1,7 +1,7 @@
 import { createClient } from "@/lib/supabaseServer";
 import { getAppCurrency } from "@/lib/appCurrencyServer";
 import { getAmountBaseCurrency } from "@/lib/amountConversion";
-import { getCachedUsdAfnRate } from "@/lib/exchangeRates";
+import { getFxSnapshotForRequest } from "@/lib/fxSnapshotServer";
 import { formatDbMoney } from "@/lib/formatDbMoney";
 import {
   Card,
@@ -15,7 +15,7 @@ export default async function ExpensesPage() {
   const supabase = await createClient();
   const [currency, fx] = await Promise.all([
     getAppCurrency(),
-    getCachedUsdAfnRate(),
+    getFxSnapshotForRequest(),
   ]);
   const amountBase = getAmountBaseCurrency();
   const { data: expenses } = await supabase
@@ -62,7 +62,7 @@ export default async function ExpensesPage() {
                         Number(e.amount),
                         currency,
                         amountBase,
-                        fx.afnPerUsd
+                        fx
                       )}
                     </td>
                   </tr>

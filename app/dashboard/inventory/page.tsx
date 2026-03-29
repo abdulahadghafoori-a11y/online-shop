@@ -1,7 +1,7 @@
 import { createClient } from "@/lib/supabaseServer";
 import { getAppCurrency } from "@/lib/appCurrencyServer";
 import { getAmountBaseCurrency } from "@/lib/amountConversion";
-import { getCachedUsdAfnRate } from "@/lib/exchangeRates";
+import { getFxSnapshotForRequest } from "@/lib/fxSnapshotServer";
 import { formatDbMoney } from "@/lib/formatDbMoney";
 import {
   Card,
@@ -16,51 +16,36 @@ export default async function InventoryPage() {
   const supabase = await createClient();
   const [displayCurrency, fx] = await Promise.all([
     getAppCurrency(),
-    getCachedUsdAfnRate(),
+    getFxSnapshotForRequest(),
   ]);
   const base = getAmountBaseCurrency();
   const money = (n: number) =>
-    formatDbMoney(n, displayCurrency, base, fx.afnPerUsd);
+    formatDbMoney(n, displayCurrency, base, fx);
 
   const { data: products } = await supabase
     .from("products")
-    .select("id, name, sku, isactive")
+    .select("id, name, sku, isactive, stock_on_hand, avg_cost")
     .order("name");
 
-  const { data: balances } = await supabase
-    .from("inventorybalance")
-    .select("productid, stockonhand");
-
-  const { data: costs } = await supabase
-    .from("productcosts")
-    .select("productid, unitcost, createdat")
-    .order("createdat", { ascending: false });
-
-  const balanceMap = new Map(
-    (balances ?? []).map((b) => [b.productid, Number(b.stockonhand)])
-  );
-
-  const costMap = new Map<string, number>();
-  for (const c of costs ?? []) {
-    if (!costMap.has(c.productid)) {
-      costMap.set(c.productid, Number(c.unitcost));
-    }
-  }
-
-  const rows = (products ?? []).map((p) => ({
-    ...p,
-    stock: balanceMap.get(p.id) ?? 0,
-    unitcost: costMap.get(p.id) ?? null,
-    stockvalue:
-      (balanceMap.get(p.id) ?? 0) * (costMap.get(p.id) ?? 0),
-  }));
+  const rows = (products ?? []).map((p) => {
+    const stock = Number(p.stock_on_hand ?? 0);
+    const avg = Number(p.avg_cost ?? 0);
+    return {
+      ...p,
+      stock,
+      unitcost: avg,
+      stockvalue: stock * avg,
+    };
+  });
 
   const totalValue = rows.reduce((s, r) => s + r.stockvalue, 0);
 
   const { data: ledger } = await supabase
-    .from("inventorytransactions")
-    .select("id, productid, type, quantity, unitcost, createdat, products(name)")
-    .order("createdat", { ascending: false })
+    .from("inventory_movements")
+    .select(
+      "id, product_id, movement_type, qty, unit_cost_snapshot, created_at, products(name)"
+    )
+    .order("created_at", { ascending: false })
     .limit(100);
 
   const { data: adjustments } = await supabase
@@ -123,7 +108,7 @@ export default async function InventoryPage() {
                   <th className="pb-2 pr-4 font-medium">SKU</th>
                   <th className="pb-2 pr-4 font-medium text-right">On hand</th>
                   <th className="pb-2 pr-4 font-medium text-right">
-                    Unit cost
+                    Avg cost (WAC)
                   </th>
                   <th className="pb-2 font-medium text-right">Stock value</th>
                 </tr>
@@ -165,9 +150,10 @@ export default async function InventoryPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Transaction ledger</CardTitle>
+          <CardTitle>Movement ledger</CardTitle>
           <CardDescription>
-            Last 100 inventory movements (purchases, sales, adjustments).
+            Last 100 movements (IN receipts, OUT sales, adjustments). Uses WAC
+            snapshots on OUT.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -194,18 +180,20 @@ export default async function InventoryPage() {
                   return (
                     <tr key={tx.id}>
                       <td className="py-2 pr-4 text-muted-foreground whitespace-nowrap">
-                        {new Date(tx.createdat).toLocaleString()}
+                        {new Date(tx.created_at).toLocaleString()}
                       </td>
                       <td className="py-2 pr-4 font-medium">
                         {product?.name ?? "—"}
                       </td>
-                      <td className="py-2 pr-4 capitalize">{tx.type}</td>
+                      <td className="py-2 pr-4">{tx.movement_type}</td>
                       <td className="py-2 pr-4 text-right tabular-nums">
-                        {Number(tx.quantity) > 0 ? "+" : ""}
-                        {tx.quantity}
+                        {Number(tx.qty) > 0 ? "+" : ""}
+                        {tx.qty}
                       </td>
                       <td className="py-2 text-right tabular-nums text-muted-foreground">
-                        {tx.unitcost != null ? money(Number(tx.unitcost)) : "—"}
+                        {tx.unit_cost_snapshot != null
+                          ? money(Number(tx.unit_cost_snapshot))
+                          : "—"}
                       </td>
                     </tr>
                   );

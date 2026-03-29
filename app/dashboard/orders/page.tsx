@@ -47,6 +47,7 @@ export default async function OrdersPage() {
                   <th className="pb-2 pr-4 font-medium">Status</th>
                   <th className="pb-2 pr-4 font-medium">Method</th>
                   <th className="pb-2 font-medium text-right">Confidence</th>
+                  <th className="pb-2 pr-2 text-right font-medium">Open</th>
                 </tr>
               </thead>
               <tbody className="divide-y">
@@ -64,6 +65,14 @@ export default async function OrdersPage() {
                       {o.confidencescore != null
                         ? Number(o.confidencescore).toFixed(2)
                         : "—"}
+                    </td>
+                    <td className="py-2 text-right">
+                      <Link
+                        href={`/dashboard/orders/${o.id}`}
+                        className="text-primary text-sm font-medium hover:underline"
+                      >
+                        View
+                      </Link>
                     </td>
                   </tr>
                 ))}

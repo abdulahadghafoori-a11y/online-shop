@@ -103,6 +103,8 @@ export interface OrderItem {
   quantity: number;
   saleprice: number;
   unitcost: number;
+  /** COGS unit cost frozen at sale time (moving WAC snapshot). */
+  product_cost_snapshot: number;
 }
 
 export interface InventoryTransaction {
@@ -147,6 +149,8 @@ export interface CreateOrderPayload {
   deliverycost: number;
   clickid?: string;
   adid?: string;
+  deliveryaddress?: string;
+  trackingnumber?: string;
   status?: OrderStatus;
 }
 
@@ -176,6 +180,67 @@ export interface ProductReport {
   revenue: number;
   cost: number;
   profit: number;
+}
+
+export interface OrderProfitReportRow {
+  order_id: string;
+  phone: string | null;
+  status: string;
+  created_at: string;
+  revenue: number;
+  cogs: number;
+  delivery_cost: number;
+  allocated_ad_spend: number;
+  profit: number;
+  line_items: number;
+}
+
+export interface InventoryReportSnapshotRow {
+  id: string;
+  name: string;
+  sku: string;
+  stock_on_hand: number;
+  avg_cost: number;
+  value: number;
+}
+
+export interface InventoryReportResponse {
+  snapshot: InventoryReportSnapshotRow[];
+  movementTotals: { IN: number; OUT: number; ADJUSTMENT: number };
+}
+
+/** One PO line in purchase reports — book currency per unit + extensions. */
+export interface PurchaseReportLineRow {
+  product_id: string;
+  product_name: string;
+  sku: string;
+  quantity: number;
+  base_cost: number;
+  shipping_cost_per_unit: number;
+  packaging_cost_per_unit: number;
+  /** base + shipping + packaging per unit */
+  landed_unit: number;
+  /** Stored rolled unit cost (often matches landed). */
+  unit_cost: number;
+  extended_base: number;
+  extended_shipping: number;
+  extended_packaging: number;
+  extended_total: number;
+}
+
+export interface PurchaseReportRow {
+  id: string;
+  supplier_name: string;
+  status: string;
+  created_at: string;
+  received_at: string | null;
+  line_count: number;
+  total_qty: number;
+  total_value: number;
+  total_extended_base: number;
+  total_extended_shipping: number;
+  total_extended_packaging: number;
+  lines: PurchaseReportLineRow[];
 }
 
 export interface FunnelReport {
@@ -210,6 +275,9 @@ export interface PurchaseOrderItem {
   product_id: string;
   quantity: number;
   unit_cost: number;
+  base_cost?: number;
+  shipping_cost_per_unit?: number;
+  packaging_cost_per_unit?: number;
   created_at: string;
 }
 

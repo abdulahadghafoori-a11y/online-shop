@@ -1,10 +1,11 @@
 "use client";
 
+import Link from "next/link";
 import { useActionState, useEffect, useState } from "react";
+import { toast } from "sonner";
 import {
   createProductAction,
   updateProductAction,
-  addProductCostAction,
   type ProductActionState,
 } from "@/app/dashboard/products/actions";
 import { useAppCurrency } from "@/components/dashboard/CurrencyProvider";
@@ -26,7 +27,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Pencil, Plus, Receipt } from "lucide-react";
+import { Pencil, Plus, Package } from "lucide-react";
 
 export type ProductCatalogRow = {
   id: string;
@@ -35,25 +36,16 @@ export type ProductCatalogRow = {
   defaultsaleprice: number;
   isactive: boolean;
   stockonhand: number;
-  latestunitcost: number | null;
+  avgcost: number;
+  inventoryvalue: number;
 };
 
 const initialAction: ProductActionState = {};
 
-function ActionError({ state }: { state: ProductActionState }) {
-  if (!state.error) return null;
-  return (
-    <p className="text-destructive text-sm" role="alert">
-      {state.error}
-    </p>
-  );
-}
-
 export function ProductSection({ rows }: { rows: ProductCatalogRow[] }) {
-  const { formatMoney, baseToDisplay } = useAppCurrency();
+  const { formatMoney, baseToDisplay, currencySymbol } = useAppCurrency();
   const [addOpen, setAddOpen] = useState(false);
   const [editRow, setEditRow] = useState<ProductCatalogRow | null>(null);
-  const [costRow, setCostRow] = useState<ProductCatalogRow | null>(null);
 
   const [addState, addAction, addPending] = useActionState(
     createProductAction,
@@ -61,10 +53,6 @@ export function ProductSection({ rows }: { rows: ProductCatalogRow[] }) {
   );
   const [editState, editAction, editPending] = useActionState(
     updateProductAction,
-    initialAction
-  );
-  const [costState, costAction, costPending] = useActionState(
-    addProductCostAction,
     initialAction
   );
 
@@ -77,8 +65,14 @@ export function ProductSection({ rows }: { rows: ProductCatalogRow[] }) {
   }, [editState.ok]);
 
   useEffect(() => {
-    if (costState.ok) setCostRow(null);
-  }, [costState.ok]);
+    if (addState.error) toast.error(addState.error);
+    else if (addState.ok) toast.success("Product created");
+  }, [addState]);
+
+  useEffect(() => {
+    if (editState.error) toast.error(editState.error);
+    else if (editState.ok) toast.success("Product updated");
+  }, [editState]);
 
   return (
     <div className="space-y-6">
@@ -86,8 +80,9 @@ export function ProductSection({ rows }: { rows: ProductCatalogRow[] }) {
         <div>
           <h1 className="text-xl font-semibold tracking-tight">Products</h1>
           <p className="text-muted-foreground text-sm">
-            SKUs are generated automatically. Pricing uses your sidebar display
-            currency; database amounts are unchanged.
+            SKUs are generated automatically. <strong>WAC</strong> updates from
+            receipts and purchase receives. Enter cost breakdown on purchase
+            lines or <strong>Receive stock</strong>.
           </p>
         </div>
         <Button type="button" onClick={() => setAddOpen(true)}>
@@ -100,9 +95,8 @@ export function ProductSection({ rows }: { rows: ProductCatalogRow[] }) {
         <CardHeader>
           <CardTitle>Catalog</CardTitle>
           <CardDescription>
-            Inactive products are hidden on new orders. COGS comes from the
-            latest <code className="text-xs">productcosts</code> row at order
-            time.
+            Inactive products are hidden on new orders. Open a product to
+            receive stock and view receipt history.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -116,10 +110,13 @@ export function ProductSection({ rows }: { rows: ProductCatalogRow[] }) {
                     List price
                   </th>
                   <th className="pb-2 pr-4 font-medium text-right">
-                    Unit cost
+                    Avg cost (WAC)
                   </th>
                   <th className="pb-2 pr-4 font-medium text-right">Margin</th>
                   <th className="pb-2 pr-4 font-medium text-right">On hand</th>
+                  <th className="pb-2 pr-4 font-medium text-right">
+                    Inv. value
+                  </th>
                   <th className="pb-2 pr-4 font-medium">Status</th>
                   <th className="pb-2 font-medium text-right">Actions</th>
                 </tr>
@@ -127,9 +124,8 @@ export function ProductSection({ rows }: { rows: ProductCatalogRow[] }) {
               <tbody className="divide-y">
                 {rows.map((r) => {
                   const margin =
-                    r.latestunitcost != null && r.defaultsaleprice > 0
-                      ? ((r.defaultsaleprice - r.latestunitcost) /
-                          r.defaultsaleprice) *
+                    r.defaultsaleprice > 0
+                      ? ((r.defaultsaleprice - r.avgcost) / r.defaultsaleprice) *
                         100
                       : null;
                   return (
@@ -140,15 +136,18 @@ export function ProductSection({ rows }: { rows: ProductCatalogRow[] }) {
                         {formatMoney(r.defaultsaleprice)}
                       </td>
                       <td className="py-2 pr-4 text-right tabular-nums text-muted-foreground">
-                        {r.latestunitcost != null
-                          ? formatMoney(r.latestunitcost)
-                          : "—"}
+                        {formatMoney(r.avgcost)}
                       </td>
                       <td className="py-2 pr-4 text-right tabular-nums text-muted-foreground">
-                        {margin != null ? `${margin.toFixed(1)}%` : "—"}
+                        {margin != null && Number.isFinite(margin)
+                          ? `${margin.toFixed(1)}%`
+                          : "—"}
                       </td>
                       <td className="py-2 pr-4 text-right tabular-nums">
                         {r.stockonhand}
+                      </td>
+                      <td className="py-2 pr-4 text-right tabular-nums">
+                        {formatMoney(r.inventoryvalue)}
                       </td>
                       <td className="py-2 pr-4">
                         <span
@@ -163,6 +162,15 @@ export function ProductSection({ rows }: { rows: ProductCatalogRow[] }) {
                       </td>
                       <td className="py-2 text-right">
                         <div className="flex flex-wrap justify-end gap-1">
+                          <Button type="button" variant="ghost" size="sm" asChild>
+                            <Link
+                              href={`/dashboard/products/${r.id}`}
+                              className="h-8 px-2"
+                            >
+                              <Package className="size-3.5" />
+                              Inventory
+                            </Link>
+                          </Button>
                           <Button
                             type="button"
                             variant="ghost"
@@ -172,16 +180,6 @@ export function ProductSection({ rows }: { rows: ProductCatalogRow[] }) {
                           >
                             <Pencil className="size-3.5" />
                             Edit
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            className="h-8 px-2"
-                            onClick={() => setCostRow(r)}
-                          >
-                            <Receipt className="size-3.5" />
-                            Cost
                           </Button>
                         </div>
                       </td>
@@ -205,8 +203,9 @@ export function ProductSection({ rows }: { rows: ProductCatalogRow[] }) {
             <DialogTitle>Add product</DialogTitle>
             <DialogDescription>
               Creates a row in <code className="text-xs">products</code> with an
-              auto-generated SKU. Optional initial cost adds a{" "}
-              <code className="text-xs">productcosts</code> row.
+              auto-generated SKU. Optional initial unit cost seeds{" "}
+              <code className="text-xs">avg_cost</code> before the first receipt.
+              Detailed costing uses purchases or Receive stock.
             </DialogDescription>
           </DialogHeader>
           <form action={addAction} className="grid gap-4">
@@ -215,7 +214,12 @@ export function ProductSection({ rows }: { rows: ProductCatalogRow[] }) {
               <Input id="add-name" name="name" required autoComplete="off" />
             </div>
             <div className="grid gap-2">
-              <Label htmlFor="add-price">Default sale price</Label>
+              <Label htmlFor="add-price">
+                Default sale price{" "}
+                <span className="text-muted-foreground font-normal tabular-nums">
+                  ({currencySymbol})
+                </span>
+              </Label>
               <Input
                 id="add-price"
                 name="defaultsaleprice"
@@ -227,7 +231,11 @@ export function ProductSection({ rows }: { rows: ProductCatalogRow[] }) {
             </div>
             <div className="grid gap-2">
               <Label htmlFor="add-initial-cost">
-                Initial unit cost <span className="font-normal">(optional)</span>
+                Initial unit cost{" "}
+                <span className="text-muted-foreground font-normal tabular-nums">
+                  ({currencySymbol})
+                </span>{" "}
+                <span className="font-normal">(optional)</span>
               </Label>
               <Input
                 id="add-initial-cost"
@@ -250,7 +258,6 @@ export function ProductSection({ rows }: { rows: ProductCatalogRow[] }) {
                 <option value="false">Inactive</option>
               </select>
             </div>
-            <ActionError state={addState} />
             <DialogFooter>
               <Button type="submit" disabled={addPending}>
                 {addPending ? "Saving…" : "Create product"}
@@ -268,8 +275,8 @@ export function ProductSection({ rows }: { rows: ProductCatalogRow[] }) {
           <DialogHeader>
             <DialogTitle>Edit product</DialogTitle>
             <DialogDescription>
-              SKU stays fixed after creation. To change COGS over time, use{" "}
-              <strong>Cost</strong> (new history row).
+              SKU stays fixed after creation. Use{" "}
+              <strong>Inventory</strong> to receive stock and update WAC.
             </DialogDescription>
           </DialogHeader>
           {editRow ? (
@@ -292,7 +299,12 @@ export function ProductSection({ rows }: { rows: ProductCatalogRow[] }) {
                 </p>
               </div>
               <div className="grid gap-2">
-                <Label htmlFor="edit-price">Default sale price</Label>
+                <Label htmlFor="edit-price">
+                  Default sale price{" "}
+                  <span className="text-muted-foreground font-normal tabular-nums">
+                    ({currencySymbol})
+                  </span>
+                </Label>
                 <Input
                   id="edit-price"
                   name="defaultsaleprice"
@@ -316,53 +328,9 @@ export function ProductSection({ rows }: { rows: ProductCatalogRow[] }) {
                   <option value="false">Inactive</option>
                 </select>
               </div>
-              <ActionError state={editState} />
               <DialogFooter>
                 <Button type="submit" disabled={editPending}>
                   {editPending ? "Saving…" : "Save changes"}
-                </Button>
-              </DialogFooter>
-            </form>
-          ) : null}
-        </DialogContent>
-      </Dialog>
-
-      <Dialog
-        open={costRow != null}
-        onOpenChange={(o) => !o && setCostRow(null)}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Record unit cost</DialogTitle>
-            <DialogDescription>
-              Appends a row to <code className="text-xs">productcosts</code>
-              {costRow ? (
-                <>
-                  {" "}
-                  for <strong>{costRow.name}</strong> ({costRow.sku}).
-                </>
-              ) : null}
-            </DialogDescription>
-          </DialogHeader>
-          {costRow ? (
-            <form key={costRow.id} action={costAction} className="grid gap-4">
-              <input type="hidden" name="productid" value={costRow.id} />
-              <div className="grid gap-2">
-                <Label htmlFor="cost-value">New unit cost</Label>
-                <Input
-                  id="cost-value"
-                  name="unitcost"
-                  type="number"
-                  step="0.01"
-                  min={0}
-                  required
-                  autoFocus
-                />
-              </div>
-              <ActionError state={costState} />
-              <DialogFooter>
-                <Button type="submit" disabled={costPending}>
-                  {costPending ? "Saving…" : "Add cost row"}
                 </Button>
               </DialogFooter>
             </form>

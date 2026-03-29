@@ -7,39 +7,27 @@ import {
 export default async function ProductsPage() {
   const supabase = await createClient();
 
-  const [{ data: products }, { data: balances }, { data: costs }] =
-    await Promise.all([
-      supabase
-        .from("products")
-        .select("id, name, sku, defaultsaleprice, isactive")
-        .order("name"),
-      supabase.from("inventorybalance").select("productid, stockonhand"),
-      supabase
-        .from("productcosts")
-        .select("productid, unitcost, createdat")
-        .order("createdat", { ascending: false }),
-    ]);
+  const { data: products } = await supabase
+    .from("products")
+    .select(
+      "id, name, sku, defaultsaleprice, isactive, stock_on_hand, avg_cost"
+    )
+    .order("name");
 
-  const stock = new Map<string, number>(
-    (balances ?? []).map((b) => [b.productid, Number(b.stockonhand)])
-  );
-
-  const latestCost = new Map<string, number>();
-  for (const c of costs ?? []) {
-    if (!latestCost.has(c.productid)) {
-      latestCost.set(c.productid, Number(c.unitcost));
-    }
-  }
-
-  const rows: ProductCatalogRow[] = (products ?? []).map((p) => ({
-    id: p.id,
-    name: p.name,
-    sku: p.sku,
-    defaultsaleprice: Number(p.defaultsaleprice),
-    isactive: p.isactive !== false,
-    stockonhand: stock.get(p.id) ?? 0,
-    latestunitcost: latestCost.get(p.id) ?? null,
-  }));
+  const rows: ProductCatalogRow[] = (products ?? []).map((p) => {
+    const stock = Number(p.stock_on_hand ?? 0);
+    const avg = Number(p.avg_cost ?? 0);
+    return {
+      id: p.id,
+      name: p.name,
+      sku: p.sku,
+      defaultsaleprice: Number(p.defaultsaleprice),
+      isactive: p.isactive !== false,
+      stockonhand: stock,
+      avgcost: avg,
+      inventoryvalue: stock * avg,
+    };
+  });
 
   return <ProductSection rows={rows} />;
 }

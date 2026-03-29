@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -66,10 +67,28 @@ export function MetaSyncPanel() {
         credentials: "same-origin",
         body: JSON.stringify({ action }),
       });
-      const json = await res.json();
-      setResults(json.results ?? []);
+      const json = (await res.json().catch(() => ({}))) as {
+        results?: SyncResult[];
+        error?: string;
+      };
+      const list = (json.results ?? []) as SyncResult[];
+      setResults(list);
+      if (!res.ok && list.length === 0) {
+        toast.error(
+          typeof json.error === "string" ? json.error : "Meta sync failed",
+        );
+        return;
+      }
+      for (const r of list) {
+        if (r.ok) {
+          toast.success(`${r.action}: ${r.count ?? 0} rows synced`);
+        } else {
+          toast.error(r.error ?? `${r.action} failed`);
+        }
+      }
     } catch {
       setResults([{ action, ok: false, error: "Network error" }]);
+      toast.error("Meta sync failed: network error");
     } finally {
       setLoading(null);
     }

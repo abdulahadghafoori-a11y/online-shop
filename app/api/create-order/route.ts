@@ -4,7 +4,10 @@ import { resolveAttribution } from "@/lib/attribution";
 import { sendCAPIEvent } from "@/lib/metaConversions";
 import { createServiceClient } from "@/lib/supabaseServer";
 import { parseUuid } from "@/lib/uuid";
+import { getAmountBaseCurrency } from "@/lib/amountConversion";
+import { userDisplayAmountToBase } from "@/lib/formMoneyServer";
 import { CreateOrderSchema } from "@/lib/validation";
+import { allowNegativeStock } from "@/lib/inventoryPolicy";
 
 export async function POST(req: NextRequest) {
   try {
@@ -20,6 +23,17 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: msg }, { status: 400 });
     }
     const body = parsed.data;
+
+    // Amounts in the JSON body are in the signed-in user’s display currency
+    // (cookies: app_currency + FX snapshot). Persist only AMOUNT_BASE_CURRENCY.
+    const deliverycostBase = await userDisplayAmountToBase(body.deliverycost);
+    const itemsForDb = await Promise.all(
+      body.items.map(async (i) => ({
+        productid: i.productid,
+        quantity: i.quantity,
+        saleprice: await userDisplayAmountToBase(i.saleprice),
+      }))
+    );
 
     const supabase = createServiceClient();
     const now = new Date();
@@ -46,29 +60,15 @@ export async function POST(req: NextRequest) {
     const attribution = await resolveAttribution({
       phone: body.phone,
       items: body.items,
-      deliverycost: body.deliverycost,
+      deliverycost: deliverycostBase,
       clickid: body.clickid,
       adid: adidOverride ?? undefined,
       ordertime: now,
     });
 
-    const itemsWithCost = await Promise.all(
-      body.items.map(async (item) => {
-        const { data: costRow } = await supabase
-          .from("productcosts")
-          .select("unitcost")
-          .eq("productid", item.productid)
-          .lte("createdat", now.toISOString())
-          .order("createdat", { ascending: false })
-          .limit(1)
-          .maybeSingle();
-
-        return {
-          ...item,
-          unitcost: costRow?.unitcost ?? 0,
-        };
-      })
-    );
+    const tracking =
+      body.trackingnumber?.trim() ||
+      null;
 
     const { data: order, error: orderError } = await supabase
       .from("orders")
@@ -77,7 +77,9 @@ export async function POST(req: NextRequest) {
         clickid: attribution.clickid,
         adid: attribution.adid,
         campaignid: attribution.campaignid,
-        deliverycost: body.deliverycost,
+        deliveryaddress: body.deliveryaddress.trim(),
+        trackingnumber: tracking,
+        deliverycost: deliverycostBase,
         status: body.status,
         attributionmethod: attribution.method,
         confidencescore: attribution.confidence,
@@ -89,33 +91,34 @@ export async function POST(req: NextRequest) {
 
     if (orderError || !order) throw orderError ?? new Error("No order returned");
 
-    const { error: itemsError } = await supabase.from("orderitems").insert(
-      itemsWithCost.map((item) => ({
-        orderid: order.id,
-        productid: item.productid,
-        quantity: item.quantity,
-        saleprice: item.saleprice,
-        unitcost: item.unitcost,
-      }))
+    const pItems = itemsForDb.map((i) => ({
+      productid: i.productid,
+      quantity: i.quantity,
+      saleprice: i.saleprice,
+    }));
+
+    const { error: applyErr } = await supabase.rpc(
+      "apply_order_sales_and_items",
+      {
+        p_order_id: order.id,
+        p_items: pItems,
+        p_allow_negative: allowNegativeStock(),
+      }
     );
 
-    if (itemsError) throw itemsError;
+    if (applyErr) {
+      await supabase.from("orders").delete().eq("id", order.id);
+      const msg = applyErr.message ?? "";
+      if (msg.includes("INSUFFICIENT_STOCK")) {
+        return NextResponse.json(
+          { error: "Insufficient stock for one or more products." },
+          { status: 400 }
+        );
+      }
+      throw applyErr;
+    }
 
-    const { error: invError } = await supabase
-      .from("inventorytransactions")
-      .insert(
-        itemsWithCost.map((item) => ({
-          productid: item.productid,
-          type: "sale" as const,
-          quantity: -item.quantity,
-          unitcost: item.unitcost,
-          referenceid: order.id,
-        }))
-      );
-
-    if (invError) throw invError;
-
-    const revenue = itemsWithCost.reduce(
+    const revenue = itemsForDb.reduce(
       (sum, i) => sum + i.saleprice * i.quantity,
       0
     );
@@ -185,14 +188,16 @@ async function firePurchaseCAPI(orderId: string) {
   const { ok, response } = await sendCAPIEvent({
     eventName: "Purchase",
     eventId: orderId,
+    orderId,
     eventTime: Math.floor(new Date(order.createdat).getTime() / 1000),
     value: revenue,
-    currency: process.env.CURRENCY ?? "USD",
+    currency: getAmountBaseCurrency(),
     fbclid,
     ipAddress: ipaddress,
     userAgent: useragent,
     phone: order.phone,
     contentIds: oi?.map((i) => i.productid) ?? [],
+    clickId: order.clickid ?? null,
   });
 
   await supabase

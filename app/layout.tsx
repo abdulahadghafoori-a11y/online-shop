@@ -6,6 +6,7 @@ import {
   getMetaTestEventCodeFromEnv,
 } from "@/lib/metaTestEvents";
 import "./globals.css";
+import { ToasterApp } from "@/components/ui/sonner";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -63,6 +64,7 @@ ${fbqInit}`,
             }}
           />
         ) : null}
+        <ToasterApp />
         {children}
       </body>
     </html>

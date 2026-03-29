@@ -1,7 +1,7 @@
 import { createClient } from "@/lib/supabaseServer";
 import { getAppCurrency } from "@/lib/appCurrencyServer";
 import { getAmountBaseCurrency } from "@/lib/amountConversion";
-import { getCachedUsdAfnRate } from "@/lib/exchangeRates";
+import { getFxSnapshotForRequest } from "@/lib/fxSnapshotServer";
 import { formatDbMoney } from "@/lib/formatDbMoney";
 import { FunnelWidget } from "@/components/dashboard/FunnelWidget";
 import { MetricCard } from "@/components/dashboard/MetricCard";
@@ -11,7 +11,7 @@ export default async function DashboardPage() {
   const supabase = await createClient();
   const [currency, fx] = await Promise.all([
     getAppCurrency(),
-    getCachedUsdAfnRate(),
+    getFxSnapshotForRequest(),
   ]);
   const amountBase = getAmountBaseCurrency();
   const thirtyDaysAgo = new Date(Date.now() - 30 * 864e5)
@@ -59,11 +59,11 @@ export default async function DashboardPage() {
         <MetricCard label="Orders" value={totalOrders ?? 0} />
         <MetricCard
           label="Revenue"
-          value={formatDbMoney(revenue, currency, amountBase, fx.afnPerUsd)}
+          value={formatDbMoney(revenue, currency, amountBase, fx)}
         />
         <MetricCard
           label="Profit"
-          value={formatDbMoney(profit, currency, amountBase, fx.afnPerUsd)}
+          value={formatDbMoney(profit, currency, amountBase, fx)}
           variant={profit >= 0 ? "positive" : "negative"}
         />
       </div>
