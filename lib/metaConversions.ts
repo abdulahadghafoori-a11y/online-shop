@@ -1,4 +1,5 @@
 import { getAmountBaseCurrency } from "@/lib/amountConversion";
+import { normalizePhoneE164 } from "@/lib/phoneNormalize";
 import { sha256 } from "./hash";
 import {
   capiPayloadSummary,
@@ -7,7 +8,22 @@ import {
 } from "./metaEventLog";
 import { resolveMetaCapiGating } from "./metaTestEvents";
 
-type CAPIEventName = "InitiateCheckout" | "Purchase";
+type CAPIEventName = "Lead" | "InitiateCheckout" | "Purchase";
+
+function resolvePixelId(): string | null {
+  const serverOnly = process.env.META_PIXEL_ID?.trim();
+  const publicId = process.env.NEXT_PUBLIC_META_PIXEL_ID?.trim();
+  if (process.env.NODE_ENV === "production") {
+    if (!serverOnly) {
+      console.error(
+        "CAPI: set META_PIXEL_ID in production. NEXT_PUBLIC_META_PIXEL_ID is not used as a fallback for sending events.",
+      );
+      return null;
+    }
+    return serverOnly;
+  }
+  return serverOnly || publicId || null;
+}
 
 export interface CAPIPayload {
   eventName: CAPIEventName;
@@ -22,7 +38,7 @@ export interface CAPIPayload {
   contentIds?: string[];
   /** For Purchase — stored on meta_event_logs.order_id */
   orderId?: string | null;
-  /** For InitiateCheckout — stored on meta_event_logs.click_id (often same as eventId) */
+  /** For Lead / InitiateCheckout — stored on meta_event_logs.click_id (often same as eventId) */
   clickId?: string | null;
 }
 
@@ -31,8 +47,7 @@ export async function sendCAPIEvent(payload: CAPIPayload): Promise<{
   ok: boolean;
   response?: unknown;
 }> {
-  const pixelId =
-    process.env.META_PIXEL_ID ?? process.env.NEXT_PUBLIC_META_PIXEL_ID;
+  const pixelId = resolvePixelId();
   const token = process.env.META_CONVERSIONS_API_TOKEN;
   const version = process.env.META_API_VERSION ?? "v21.0";
 
@@ -42,7 +57,9 @@ export async function sendCAPIEvent(payload: CAPIPayload): Promise<{
   const orderId = payload.orderId ?? null;
   const clickId =
     payload.clickId ??
-    (payload.eventName === "InitiateCheckout" ? payload.eventId : null);
+    (payload.eventName === "Lead" || payload.eventName === "InitiateCheckout"
+      ? payload.eventId
+      : null);
 
   const baseLog = {
     order_id: orderId,
@@ -96,7 +113,8 @@ export async function sendCAPIEvent(payload: CAPIPayload): Promise<{
     user_data.fbc = `fb.1.${payload.eventTime * 1000}.${payload.fbclid}`;
   }
   if (payload.phone) {
-    user_data.ph = [await sha256(payload.phone)];
+    const ph = normalizePhoneE164(payload.phone);
+    user_data.ph = [await sha256(ph)];
   }
 
   const event: Record<string, unknown> = {

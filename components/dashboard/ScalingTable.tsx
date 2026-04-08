@@ -10,15 +10,8 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
+import { scalingLabelBadgeClass } from "@/lib/scalingReport";
 import { useAppCurrency } from "@/components/dashboard/CurrencyProvider";
-
-const badge: Record<string, string> = {
-  SCALE:
-    "border-green-200 bg-green-100 text-green-800 dark:border-green-900 dark:bg-green-950 dark:text-green-400",
-  WATCH:
-    "border-amber-200 bg-amber-100 text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200",
-  KILL: "border-red-200 bg-red-100 text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-400",
-};
 
 export function ScalingTable() {
   const { formatMoney } = useAppCurrency();
@@ -36,7 +29,11 @@ export function ScalingTable() {
     <Card className="shadow-sm">
       <CardHeader>
         <CardTitle className="text-base">Campaign decisions</CardTitle>
-        <CardDescription>Last 7 days — spend vs attributed revenue.</CardDescription>
+        <CardDescription>
+          After daily stats are uploaded, each campaign is scored on the last{" "}
+          7 days: delivery spend vs order revenue attributed to that campaign.
+          SCALE / WATCH / KILL also appear on each campaign, ad set, and ad page.
+        </CardDescription>
       </CardHeader>
       <CardContent>
         {loading ? (
@@ -78,12 +75,7 @@ export function ScalingTable() {
                       {formatMoney(row.profit)}
                     </td>
                     <td className="py-2 text-center">
-                      <span
-                        className={cn(
-                          "inline-block rounded-md border px-2 py-0.5 text-xs font-semibold",
-                          badge[row.label]
-                        )}
-                      >
+                      <span className={scalingLabelBadgeClass(row.label)}>
                         {row.label}
                       </span>
                     </td>

@@ -15,6 +15,7 @@ import {
   Receipt,
   ShoppingCart,
   Truck,
+  Users,
 } from "lucide-react";
 
 import { CurrencySwitcher } from "@/components/dashboard/CurrencySwitcher";
@@ -27,6 +28,7 @@ const mainNav: { href: string; label: string; icon: typeof LayoutDashboard }[] =
   { href: "/dashboard/products", label: "Products", icon: Package },
   { href: "/dashboard/purchases", label: "Purchases", icon: Truck },
   { href: "/dashboard/inventory", label: "Inventory", icon: Box },
+  { href: "/dashboard/leads", label: "Leads", icon: Users },
   { href: "/dashboard/campaigns", label: "Campaigns", icon: Megaphone },
   { href: "/dashboard/expenses", label: "Expenses", icon: Receipt },
 ];

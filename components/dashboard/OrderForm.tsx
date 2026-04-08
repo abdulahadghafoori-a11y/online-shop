@@ -8,6 +8,7 @@ import { roundMoney2 } from "@/lib/amountConversion";
 import {
   AFGHANISTAN_PROVINCES,
   DEFAULT_AFGHAN_PROVINCE,
+  getDefaultDeliveryCost,
 } from "@/lib/afghanistanProvinces";
 import {
   COUNTRY_DIAL_OPTIONS,
@@ -347,6 +348,11 @@ export function OrderForm({ products, ads }: OrderFormProps) {
                     value={clickId}
                     onChange={(e) => setClickId(e.target.value)}
                   />
+                  <p className="text-muted-foreground text-xs">
+                    Confirm this code with the customer when possible — it locks
+                    attribution to the Meta click (confidence 1.0) and keeps
+                    campaign reports trustworthy.
+                  </p>
                 </div>
               </div>
             </section>
@@ -486,6 +492,9 @@ export function OrderForm({ products, ads }: OrderFormProps) {
                   onValueChange={(v) => {
                     setDeliveryProvince(v);
                     if (isKabulProvince(v)) setTrackingNumber("");
+                    setDeliveryCost(
+                      String(roundMoney2(baseToDisplay(getDefaultDeliveryCost(v)))),
+                    );
                   }}
                 >
                   <SelectTrigger id="province" className="w-full">

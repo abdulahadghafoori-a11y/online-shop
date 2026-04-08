@@ -6,6 +6,7 @@ import { getAppUserIdForAuthUser } from "@/lib/authApi";
 import { displayInputToBaseAmount } from "@/lib/formMoneyServer";
 import { roundMoney6 } from "@/lib/amountConversion";
 import { CreatePurchaseSchema } from "@/lib/validation";
+import { getFxSnapshotForRequest } from "@/lib/fxSnapshotServer";
 
 export type PurchaseActionState = {
   error?: string;
@@ -22,7 +23,7 @@ export async function createPurchaseOrderAction(
   } = await supabase.auth.getUser();
   if (!user) return { error: "Unauthorized" };
 
-  const suppliername = String(formData.get("suppliername") ?? "").trim();
+  const supplierNameRaw = String(formData.get("suppliername") ?? "").trim();
   const rawItems = formData.get("items");
 
   let parsedItems: {
@@ -39,7 +40,7 @@ export async function createPurchaseOrderAction(
   }
 
   const result = CreatePurchaseSchema.safeParse({
-    suppliername,
+    suppliername: supplierNameRaw,
     items: parsedItems,
   });
   if (!result.success) {
@@ -47,6 +48,27 @@ export async function createPurchaseOrderAction(
   }
 
   const createdBy = await getAppUserIdForAuthUser(user.id);
+
+  const supplierName = result.data.suppliername;
+  const { data: existingSupplier } = await supabase
+    .from("suppliers")
+    .select("id")
+    .eq("name", supplierName)
+    .maybeSingle();
+
+  let supplierId: string;
+  if (existingSupplier) {
+    supplierId = existingSupplier.id;
+  } else {
+    const { data: newSupplier, error: supErr } = await supabase
+      .from("suppliers")
+      .insert({ name: supplierName })
+      .select("id")
+      .single();
+    if (supErr || !newSupplier)
+      return { error: supErr?.message ?? "Failed to create supplier" };
+    supplierId = newSupplier.id;
+  }
 
   let convertedItems: {
     productid: string;
@@ -85,12 +107,16 @@ export async function createPurchaseOrderAction(
     };
   }
 
+  const fxSnap = await getFxSnapshotForRequest();
+
   const { data: po, error: poErr } = await supabase
     .from("purchase_orders")
     .insert({
-      supplier_name: result.data.suppliername,
+      supplier_id: supplierId,
       status: "draft",
       created_by: createdBy,
+      fx_afn_per_usd: fxSnap.afnPerUsd,
+      fx_cny_per_usd: fxSnap.cnyPerUsd,
     })
     .select("id")
     .single();
@@ -111,7 +137,10 @@ export async function createPurchaseOrderAction(
       }))
     );
 
-  if (itemErr) return { error: `PO created but items failed: ${itemErr.message}` };
+  if (itemErr) {
+    await supabase.from("purchase_orders").delete().eq("id", po.id);
+    return { error: `Failed to save line items: ${itemErr.message}` };
+  }
 
   revalidatePath("/dashboard/purchases");
   return { ok: true };
@@ -130,48 +159,53 @@ export async function receivePurchaseOrderAction(
   const poId = String(formData.get("id") ?? "").trim();
   if (!poId) return { error: "Missing purchase order ID" };
 
-  const { data: po } = await supabase
-    .from("purchase_orders")
-    .select("id, status")
-    .eq("id", poId)
-    .single();
+  const { error: rpcErr } = await supabase.rpc("receive_purchase_order", {
+    p_po_id: poId,
+  });
 
-  if (!po) return { error: "Purchase order not found" };
-  if (po.status !== "draft") return { error: "Only draft POs can be received" };
-
-  const { data: items } = await supabase
-    .from("purchase_order_items")
-    .select(
-      "product_id, quantity, unit_cost, base_cost, shipping_cost_per_unit, packaging_cost_per_unit"
-    )
-    .eq("purchase_order_id", poId);
-
-  if (!items?.length) return { error: "PO has no items" };
-
-  for (const item of items) {
-    const qtyInt = Math.max(1, Math.round(Number(item.quantity)));
-    const { error: recvErr } = await supabase.rpc("apply_stock_receipt", {
-      p_product_id: item.product_id,
-      p_qty: qtyInt,
-      p_base_cost: Number(item.base_cost ?? 0),
-      p_shipping_cost_per_unit: Number(item.shipping_cost_per_unit ?? 0),
-      p_packaging_cost_per_unit: Number(item.packaging_cost_per_unit ?? 0),
-      p_notes: `purchase_order:${poId}`,
-      p_received_date: new Date().toISOString().slice(0, 10),
-    });
-    if (recvErr) {
-      return { error: `Stock receipt failed: ${recvErr.message}` };
-    }
+  if (rpcErr) {
+    const msg = rpcErr.message;
+    if (msg.includes("not found")) return { error: "Purchase order not found" };
+    if (msg.includes("Only draft")) return { error: "Only draft POs can be received" };
+    return { error: `Stock receipt failed: ${msg}` };
   }
-
-  const { error: updateErr } = await supabase
-    .from("purchase_orders")
-    .update({ status: "received", received_at: new Date().toISOString() })
-    .eq("id", poId);
-
-  if (updateErr) return { error: `Mark received failed: ${updateErr.message}` };
 
   revalidatePath("/dashboard/purchases");
   revalidatePath("/dashboard/products");
+  return { ok: true };
+}
+
+export async function cancelPurchaseOrderAction(
+  _prev: PurchaseActionState,
+  formData: FormData
+): Promise<PurchaseActionState> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { error: "Unauthorized" };
+
+  const poId = String(formData.get("id") ?? "").trim();
+  if (!poId) return { error: "Missing purchase order ID" };
+
+  const { data: po, error: fetchErr } = await supabase
+    .from("purchase_orders")
+    .select("id, status")
+    .eq("id", poId)
+    .maybeSingle();
+
+  if (fetchErr || !po) return { error: "Purchase order not found" };
+  if (po.status !== "draft") {
+    return { error: "Only draft purchase orders can be cancelled." };
+  }
+
+  const { error: updErr } = await supabase
+    .from("purchase_orders")
+    .update({ status: "cancelled" })
+    .eq("id", poId);
+
+  if (updErr) return { error: updErr.message };
+
+  revalidatePath("/dashboard/purchases");
   return { ok: true };
 }

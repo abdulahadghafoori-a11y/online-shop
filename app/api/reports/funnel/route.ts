@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/authApi";
-import { createServiceClient } from "@/lib/supabaseServer";
+import { createClient } from "@/lib/supabaseServer";
 
 export async function GET() {
   const user = await getSessionUser();
@@ -8,7 +8,7 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const supabase = createServiceClient();
+  const supabase = await createClient();
 
   const [{ count: clicks }, { count: leads }, { count: orders }] =
     await Promise.all([

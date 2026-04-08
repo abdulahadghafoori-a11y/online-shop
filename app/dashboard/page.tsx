@@ -3,6 +3,7 @@ import { getAppCurrency } from "@/lib/appCurrencyServer";
 import { getAmountBaseCurrency } from "@/lib/amountConversion";
 import { getFxSnapshotForRequest } from "@/lib/fxSnapshotServer";
 import { formatDbMoney } from "@/lib/formatDbMoney";
+import { AttributionHealthCard } from "@/components/dashboard/AttributionHealthCard";
 import { FunnelWidget } from "@/components/dashboard/FunnelWidget";
 import { MetricCard } from "@/components/dashboard/MetricCard";
 import { ScalingTable } from "@/components/dashboard/ScalingTable";
@@ -23,6 +24,7 @@ export default async function DashboardPage() {
     { count: totalClicks },
     { data: revenueData },
     { data: spendData },
+    { data: deliveryData },
   ] = await Promise.all([
     supabase
       .from("orders")
@@ -35,19 +37,29 @@ export default async function DashboardPage() {
       .gte("createdat", thirtyDaysAgo),
     supabase
       .from("orderitems")
-      .select("saleprice, quantity, orders!inner(status, createdat)")
+      .select("saleprice, quantity, product_cost_snapshot, orders!inner(status, createdat)")
       .neq("orders.status", "cancelled")
       .gte("orders.createdat", thirtyDaysAgo),
     supabase
       .from("dailyadstats")
       .select("spend")
       .gte("date", thirtyDaysAgo),
+    supabase
+      .from("orders")
+      .select("deliverycost")
+      .neq("status", "cancelled")
+      .gte("createdat", thirtyDaysAgo),
   ]);
 
-  const revenue =
-    revenueData?.reduce((s, i) => s + i.saleprice * i.quantity, 0) ?? 0;
+  let revenue = 0;
+  let cogs = 0;
+  for (const i of revenueData ?? []) {
+    revenue += Number(i.saleprice) * Number(i.quantity);
+    cogs += Number(i.product_cost_snapshot) * Number(i.quantity);
+  }
   const spend = spendData?.reduce((s, r) => s + Number(r.spend), 0) ?? 0;
-  const profit = revenue - spend;
+  const delivery = deliveryData?.reduce((s, r) => s + Number(r.deliverycost), 0) ?? 0;
+  const profit = revenue - cogs - delivery - spend;
 
   return (
     <div className="space-y-8">
@@ -67,9 +79,10 @@ export default async function DashboardPage() {
           variant={profit >= 0 ? "positive" : "negative"}
         />
       </div>
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
         <FunnelWidget />
         <ScalingTable />
+        <AttributionHealthCard />
       </div>
     </div>
   );

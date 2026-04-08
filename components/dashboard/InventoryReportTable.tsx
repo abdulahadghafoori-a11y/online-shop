@@ -13,6 +13,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { useAppCurrency } from "@/components/dashboard/CurrencyProvider";
+import { CsvExportButton } from "@/components/dashboard/CsvExportButton";
 import type { InventoryReportResponse } from "@/types";
 
 export function InventoryReportTable() {
@@ -97,6 +98,19 @@ export function InventoryReportTable() {
             <Button type="button" onClick={() => void load()} disabled={loading}>
               {loading ? "Loading…" : "Refresh"}
             </Button>
+            {data && data.snapshot.length > 0 && (
+              <CsvExportButton
+                endpoint={`/api/reports/inventory?from=${fromDate}&to=${toDate}`}
+                filename={`inventory-report-${fromDate}-${toDate}`}
+                columns={[
+                  { key: "name", label: "Product" },
+                  { key: "sku", label: "SKU" },
+                  { key: "stock_on_hand", label: "On Hand" },
+                  { key: "avg_cost", label: "Avg Cost" },
+                  { key: "value", label: "Value" },
+                ]}
+              />
+            )}
           </div>
 
           {data ? (

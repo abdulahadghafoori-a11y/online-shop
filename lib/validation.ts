@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { normalizePhoneE164 } from "@/lib/phoneNormalize";
 
 // ─── Create Order ───────────────────────────────────────────────
 
@@ -13,7 +14,8 @@ export const CreateOrderSchema = z.object({
     .string()
     .trim()
     .min(1, "Phone is required")
-    .regex(/^\+?\d[\d\s\-()]{4,}$/, "Invalid phone number"),
+    .regex(/^\+?\d[\d\s\-()]{4,}$/, "Invalid phone number")
+    .transform((s) => normalizePhoneE164(s)),
   items: z.array(OrderItemSchema).min(1, "At least one line item required"),
   deliverycost: z.number().nonnegative().default(0),
   clickid: z.string().trim().optional(),
@@ -43,6 +45,7 @@ export const CreateProductSchema = z.object({
     .finite()
     .nonnegative()
     .optional(),
+  reorder_point: z.number().int().nonnegative().default(0),
 });
 
 export const UpdateProductSchema = z.object({
@@ -53,6 +56,7 @@ export const UpdateProductSchema = z.object({
     .finite("Enter a valid default sale price.")
     .nonnegative("Price cannot be negative"),
   isactive: z.boolean().default(true),
+  reorder_point: z.number().int().nonnegative().default(0),
 });
 
 // ─── Purchases ──────────────────────────────────────────────────
@@ -60,7 +64,7 @@ export const UpdateProductSchema = z.object({
 export const PurchaseItemSchema = z
   .object({
     productid: z.string().uuid("Invalid product ID"),
-    quantity: z.number().positive("Quantity must be positive"),
+    quantity: z.number().int("Quantity must be a whole number").positive("Quantity must be positive"),
     base_cost: z.number().nonnegative(),
     shipping_cost_per_unit: z.number().nonnegative(),
     packaging_cost_per_unit: z.number().nonnegative(),
@@ -79,6 +83,23 @@ export const CreatePurchaseSchema = z.object({
   items: z
     .array(PurchaseItemSchema)
     .min(1, "At least one item is required"),
+});
+
+// ─── Expense ─────────────────────────────────────────────────────
+
+export const CreateExpenseSchema = z.object({
+  category: z.string().trim().min(1, "Category is required"),
+  amount: z.number().positive("Amount must be positive"),
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be YYYY-MM-DD"),
+  notes: z.string().trim().optional(),
+});
+
+export const UpdateExpenseSchema = z.object({
+  id: z.string().uuid("Invalid expense ID"),
+  category: z.string().trim().min(1, "Category is required"),
+  amount: z.number().positive("Amount must be positive"),
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be YYYY-MM-DD"),
+  notes: z.string().trim().optional(),
 });
 
 // ─── Stock Adjustment ───────────────────────────────────────────

@@ -1,17 +1,27 @@
 "use client";
 
 import { Fragment, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { ChevronDown, ChevronRight } from "lucide-react";
-import { ReceiveButton } from "@/components/dashboard/PurchaseFormSection";
+import { ReceiveButton, CancelPOButton } from "@/components/dashboard/PurchaseFormSection";
 import { Button } from "@/components/ui/button";
 import { useAppCurrency } from "@/components/dashboard/CurrencyProvider";
 import type { PurchaseReportRow } from "@/types";
 import { cn } from "@/lib/utils";
 
+const STATUS_OPTIONS = [
+  { value: "", label: "All" },
+  { value: "draft", label: "Draft" },
+  { value: "received", label: "Received" },
+  { value: "cancelled", label: "Cancelled" },
+] as const;
+
 export function PurchaseOrdersTable({
   orders,
+  currentStatus,
 }: {
   orders: PurchaseReportRow[];
+  currentStatus: string;
 }) {
   const { formatMoney } = useAppCurrency();
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
@@ -25,8 +35,32 @@ export function PurchaseOrdersTable({
     });
   }
 
+  const router = useRouter();
+  const searchParams = useSearchParams();
+
+  function setStatusFilter(value: string) {
+    const params = new URLSearchParams(searchParams.toString());
+    if (value) params.set("status", value);
+    else params.delete("status");
+    router.push(`/dashboard/purchases${params.size ? `?${params}` : ""}`);
+  }
+
   return (
-    <div className="overflow-x-auto">
+    <div className="space-y-4">
+      <div className="flex flex-wrap gap-1">
+        {STATUS_OPTIONS.map((opt) => (
+          <Button
+            key={opt.value}
+            type="button"
+            variant={currentStatus === opt.value ? "default" : "outline"}
+            size="sm"
+            onClick={() => setStatusFilter(opt.value)}
+          >
+            {opt.label}
+          </Button>
+        ))}
+      </div>
+      <div className="overflow-x-auto">
       <table className="w-full min-w-[64rem] text-sm">
         <thead>
           <tr className="border-b text-left text-muted-foreground">
@@ -109,7 +143,10 @@ export function PurchaseOrdersTable({
                   </td>
                   <td className="py-2 text-right">
                     {po.status === "draft" ? (
-                      <ReceiveButton poId={po.id} />
+                      <div className="flex items-center justify-end gap-1">
+                        <CancelPOButton poId={po.id} />
+                        <ReceiveButton poId={po.id} />
+                      </div>
                     ) : (
                       "—"
                     )}
@@ -222,9 +259,10 @@ export function PurchaseOrdersTable({
       </table>
       {!orders.length ? (
         <p className="text-muted-foreground py-6 text-center text-sm">
-          No purchase orders yet.
+          No purchase orders match the current filter.
         </p>
       ) : null}
+      </div>
     </div>
   );
 }

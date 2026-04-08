@@ -14,6 +14,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { useAppCurrency } from "@/components/dashboard/CurrencyProvider";
+import { CsvExportButton } from "@/components/dashboard/CsvExportButton";
 import type { PurchaseReportRow } from "@/types";
 import { cn } from "@/lib/utils";
 
@@ -119,6 +120,23 @@ export function PurchasesReportTable() {
           <Button type="button" onClick={() => void load()} disabled={loading}>
             {loading ? "Loading…" : "Run report"}
           </Button>
+          {rows.length > 0 && (
+            <CsvExportButton
+              endpoint={`/api/reports/purchases?from=${fromDate}&to=${toDate}`}
+              filename={`purchases-report-${fromDate}-${toDate}`}
+              columns={[
+                { key: "created_at", label: "Created" },
+                { key: "supplier_name", label: "Supplier" },
+                { key: "status", label: "Status" },
+                { key: "line_count", label: "Lines" },
+                { key: "total_qty", label: "Qty" },
+                { key: "total_extended_base", label: "Ext Base" },
+                { key: "total_extended_shipping", label: "Ext Ship" },
+                { key: "total_extended_packaging", label: "Ext Pack" },
+                { key: "total_value", label: "Total" },
+              ]}
+            />
+          )}
         </div>
 
         {rows.length > 0 ? (

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/authApi";
-import { createServiceClient } from "@/lib/supabaseServer";
-import { reportRangeUtc } from "@/lib/reportDateRange";
+import { createClient } from "@/lib/supabaseServer";
+import { parseReportDateParam, reportRangeUtc, todayISO } from "@/lib/reportDateRange";
 import type { InventoryReportResponse } from "@/types";
 
 export async function GET(req: NextRequest) {
@@ -11,12 +11,11 @@ export async function GET(req: NextRequest) {
   }
 
   const { searchParams } = new URL(req.url);
-  const from = searchParams.get("from") ?? "2024-01-01";
-  const to =
-    searchParams.get("to") ?? new Date().toISOString().split("T")[0];
+  const from = parseReportDateParam(searchParams.get("from"), "2024-01-01");
+  const to = parseReportDateParam(searchParams.get("to"), todayISO());
 
   const { start, endExclusive } = reportRangeUtc(from, to);
-  const supabase = createServiceClient();
+  const supabase = await createClient();
 
   const [productsRes, movementsRes] = await Promise.all([
     supabase

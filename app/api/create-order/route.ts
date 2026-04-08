@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAppUserIdForAuthUser, getSessionUser } from "@/lib/authApi";
 import { resolveAttribution } from "@/lib/attribution";
-import { sendCAPIEvent } from "@/lib/metaConversions";
+import { sendCAPIEvent } from "@/lib/meta/capi";
+import { normalizePhoneE164 } from "@/lib/phoneNormalize";
 import { createServiceClient } from "@/lib/supabaseServer";
 import { parseUuid } from "@/lib/uuid";
 import { getAmountBaseCurrency } from "@/lib/amountConversion";
@@ -23,6 +24,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: msg }, { status: 400 });
     }
     const body = parsed.data;
+    const phoneStored = normalizePhoneE164(body.phone);
 
     // Amounts in the JSON body are in the signed-in user’s display currency
     // (cookies: app_currency + FX snapshot). Persist only AMOUNT_BASE_CURRENCY.
@@ -58,7 +60,7 @@ export async function POST(req: NextRequest) {
     const adidOverride = parseUuid(body.adid?.trim() ?? null);
 
     const attribution = await resolveAttribution({
-      phone: body.phone,
+      phone: phoneStored,
       items: body.items,
       deliverycost: deliverycostBase,
       clickid: body.clickid,
@@ -70,53 +72,62 @@ export async function POST(req: NextRequest) {
       body.trackingnumber?.trim() ||
       null;
 
-    const { data: order, error: orderError } = await supabase
-      .from("orders")
-      .insert({
-        phone: body.phone.trim(),
-        clickid: attribution.clickid,
-        adid: attribution.adid,
-        campaignid: attribution.campaignid,
-        deliveryaddress: body.deliveryaddress.trim(),
-        trackingnumber: tracking,
-        deliverycost: deliverycostBase,
-        status: body.status,
-        attributionmethod: attribution.method,
-        confidencescore: attribution.confidence,
-        allocatedadspend: 0,
-        createdby,
-      })
-      .select("*")
-      .single();
-
-    if (orderError || !order) throw orderError ?? new Error("No order returned");
-
     const pItems = itemsForDb.map((i) => ({
       productid: i.productid,
       quantity: i.quantity,
       saleprice: i.saleprice,
     }));
 
-    const { error: applyErr } = await supabase.rpc(
-      "apply_order_sales_and_items",
+    const { data: orderId, error: orderError } = await supabase.rpc(
+      "create_order_and_apply_items",
       {
-        p_order_id: order.id,
+        p_phone: phoneStored,
+        p_clickid: attribution.clickid,
+        p_adid: attribution.adid,
+        p_adsetid: attribution.adsetid,
+        p_campaignid: attribution.campaignid,
+        p_deliveryaddress: body.deliveryaddress.trim(),
+        p_trackingnumber: tracking,
+        p_deliverycost: deliverycostBase,
+        p_status: body.status,
+        p_attributionmethod: attribution.method,
+        p_confidencescore: attribution.confidence,
+        p_allocatedadspend: 0,
+        p_createdby: createdby,
         p_items: pItems,
         p_allow_negative: allowNegativeStock(),
-      }
+      },
     );
 
-    if (applyErr) {
-      await supabase.from("orders").delete().eq("id", order.id);
-      const msg = applyErr.message ?? "";
+    if (orderError || !orderId) {
+      const msg = orderError?.message ?? "";
       if (msg.includes("INSUFFICIENT_STOCK")) {
         return NextResponse.json(
           { error: "Insufficient stock for one or more products." },
           { status: 400 }
         );
       }
-      throw applyErr;
+      throw orderError ?? new Error("No order returned");
     }
+
+    if (attribution.campaignid) {
+      const { error: allocErr } = await supabase.rpc(
+        "reallocate_campaign_day_ad_spend",
+        {
+          p_campaign_id: attribution.campaignid,
+          p_date: now.toISOString().split("T")[0],
+        },
+      );
+      if (allocErr) console.warn("ad-spend allocation:", allocErr.message);
+    }
+
+    const { data: order, error: fetchErr } = await supabase
+      .from("orders")
+      .select("*")
+      .eq("id", orderId)
+      .single();
+
+    if (fetchErr || !order) throw fetchErr ?? new Error("Order fetch failed");
 
     const revenue = itemsForDb.reduce(
       (sum, i) => sum + i.saleprice * i.quantity,
@@ -189,13 +200,13 @@ async function firePurchaseCAPI(orderId: string) {
     eventName: "Purchase",
     eventId: orderId,
     orderId,
-    eventTime: Math.floor(new Date(order.createdat).getTime() / 1000),
+    eventTime: Math.floor(Date.now() / 1000),
     value: revenue,
     currency: getAmountBaseCurrency(),
     fbclid,
     ipAddress: ipaddress,
     userAgent: useragent,
-    phone: order.phone,
+    phone: normalizePhoneE164(order.phone),
     contentIds: oi?.map((i) => i.productid) ?? [],
     clickId: order.clickid ?? null,
   });
@@ -210,5 +221,12 @@ async function firePurchaseCAPI(orderId: string) {
     })
     .eq("orderid", orderId)
     .eq("eventtype", "Purchase")
-    .eq("status", "pending");
+    .in("status", ["pending", "failed"]);
+
+  if (ok) {
+    await supabase
+      .from("orders")
+      .update({ meta_sent: true })
+      .eq("id", orderId);
+  }
 }

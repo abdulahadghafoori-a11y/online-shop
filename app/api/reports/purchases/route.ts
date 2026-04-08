@@ -5,8 +5,8 @@ import {
   summarizePurchaseLines,
   type RawPurchaseOrderItem,
 } from "@/lib/purchaseOrderLines";
-import { createServiceClient } from "@/lib/supabaseServer";
-import { reportRangeUtc } from "@/lib/reportDateRange";
+import { createClient } from "@/lib/supabaseServer";
+import { parseReportDateParam, reportRangeUtc, todayISO } from "@/lib/reportDateRange";
 import type { PurchaseReportRow } from "@/types";
 
 export async function GET(req: NextRequest) {
@@ -16,19 +16,19 @@ export async function GET(req: NextRequest) {
   }
 
   const { searchParams } = new URL(req.url);
-  const from = searchParams.get("from") ?? "2024-01-01";
-  const to =
-    searchParams.get("to") ?? new Date().toISOString().split("T")[0];
+  const from = parseReportDateParam(searchParams.get("from"), "2024-01-01");
+  const to = parseReportDateParam(searchParams.get("to"), todayISO());
 
   const { start, endExclusive } = reportRangeUtc(from, to);
-  const supabase = createServiceClient();
+  const supabase = await createClient();
 
   const { data, error } = await supabase
     .from("purchase_orders")
     .select(
       `
       id,
-      supplier_name,
+      supplier_id,
+      suppliers ( name ),
       status,
       created_at,
       received_at,
@@ -55,9 +55,11 @@ export async function GET(req: NextRequest) {
     const rawItems = (po.purchase_order_items ?? []) as RawPurchaseOrderItem[];
     const lines = rawItems.map(mapPurchaseOrderItemToLine);
     const sums = summarizePurchaseLines(lines);
+    const supRaw = po.suppliers as { name: string } | { name: string }[] | null;
+    const supName = Array.isArray(supRaw) ? supRaw[0]?.name : supRaw?.name;
     return {
       id: po.id as string,
-      supplier_name: po.supplier_name as string,
+      supplier_name: supName ?? "—",
       status: po.status as string,
       created_at: po.created_at as string,
       received_at: (po.received_at as string | null) ?? null,

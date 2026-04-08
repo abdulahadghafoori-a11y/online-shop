@@ -28,6 +28,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 
 const initial: OrderDashboardActionState = {};
 
@@ -43,11 +44,13 @@ export function OrderDetailToolbar({
   status: initialStatus,
   deliveryaddress: initialAddress,
   trackingnumber: initialTracking,
+  notes: initialNotes,
 }: {
   orderId: string;
   status: string;
   deliveryaddress: string;
   trackingnumber: string | null;
+  notes: string | null;
 }) {
   const router = useRouter();
   const [status, setStatus] = useState(initialStatus);
@@ -55,6 +58,7 @@ export function OrderDetailToolbar({
   const [trackingnumber, setTrackingnumber] = useState(
     initialTracking ?? "",
   );
+  const [notes, setNotes] = useState(initialNotes ?? "");
   const [cancelOpen, setCancelOpen] = useState(false);
 
   const provinceOptions = useMemo(() => {
@@ -77,7 +81,8 @@ export function OrderDetailToolbar({
     setStatus(initialStatus);
     setDeliveryaddress(initialAddress);
     setTrackingnumber(initialTracking ?? "");
-  }, [initialStatus, initialAddress, initialTracking]);
+    setNotes(initialNotes ?? "");
+  }, [initialStatus, initialAddress, initialTracking, initialNotes]);
 
   useEffect(() => {
     if (updateState.error) toast.error(updateState.error);
@@ -151,8 +156,8 @@ export function OrderDetailToolbar({
                 <DialogHeader>
                   <DialogTitle>Cancel this order?</DialogTitle>
                   <DialogDescription>
-                    Only pending and confirmed orders can be cancelled. Stock
-                    is not returned to inventory automatically.
+                    Cancelling will restore stock to inventory and mark this
+                    order as cancelled. This cannot be undone.
                   </DialogDescription>
                 </DialogHeader>
                 <form action={cancelAction}>
@@ -235,6 +240,17 @@ export function OrderDetailToolbar({
                 autoComplete="off"
               />
             </div>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="ord-notes">Notes (internal)</Label>
+            <Textarea
+              id="ord-notes"
+              name="notes"
+              rows={3}
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              placeholder="Internal notes about this order…"
+            />
           </div>
           <Button type="submit" disabled={updatePending} className="w-fit">
             {updatePending ? "Saving…" : "Save changes"}

@@ -1,6 +1,16 @@
+import Link from "next/link";
 import { createClient } from "@/lib/supabaseServer";
-import { fetchMetaAdAccountCampaigns } from "@/lib/metaMarketing";
+import { getAppCurrency } from "@/lib/appCurrencyServer";
+import { getAmountBaseCurrency } from "@/lib/amountConversion";
+import { getFxSnapshotForRequest } from "@/lib/fxSnapshotServer";
+import { formatDbMoney } from "@/lib/formatDbMoney";
+import { MetaCsvUpload } from "@/components/dashboard/MetaCsvUpload";
 import { MetaSyncPanel } from "@/components/dashboard/MetaSyncPanel";
+import {
+  getScalingForCampaign,
+  scalingLabelBadgeClass,
+  type ScalingSnapshot,
+} from "@/lib/scalingReport";
 import {
   Card,
   CardContent,
@@ -9,163 +19,174 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 
+type LocalCampaign = {
+  id: string;
+  name: string;
+  platform: string;
+  status: string;
+  metacampaignid: string | null;
+  createdat: string | null;
+};
+
 export default async function CampaignsPage() {
   const supabase = await createClient();
-  const [metaResult, { data: localCampaigns }] = await Promise.all([
-    fetchMetaAdAccountCampaigns(),
+
+  const [displayCurrency, fx, { data: localCampaigns }] = await Promise.all([
+    getAppCurrency(),
+    getFxSnapshotForRequest(),
     supabase
       .from("campaigns")
       .select("id, name, platform, status, metacampaignid, createdat")
       .order("createdat", { ascending: false }),
   ]);
 
+  const campaigns = (localCampaigns ?? []) as LocalCampaign[];
+  const campaignIds = campaigns.map((c) => c.id);
+
+  const base = getAmountBaseCurrency();
+  const money = (n: number) => formatDbMoney(n, displayCurrency, base, fx);
+
+  let spendMap = new Map<string, number>();
+  let orderCountMap = new Map<string, number>();
+  let scalingMap = new Map<string, ScalingSnapshot>();
+
+  if (campaignIds.length) {
+    const [{ data: spendRows }, { data: orderRows }] = await Promise.all([
+      supabase
+        .from("daily_ad_insights")
+        .select("campaign_id, spend")
+        .in("campaign_id", campaignIds),
+      supabase
+        .from("orders")
+        .select("campaignid")
+        .in("campaignid", campaignIds)
+        .neq("status", "cancelled"),
+    ]);
+
+    for (const r of spendRows ?? []) {
+      const cid = r.campaign_id as string;
+      spendMap.set(cid, (spendMap.get(cid) ?? 0) + Number(r.spend ?? 0));
+    }
+
+    for (const r of orderRows ?? []) {
+      const cid = r.campaignid as string;
+      orderCountMap.set(cid, (orderCountMap.get(cid) ?? 0) + 1);
+    }
+
+    const scalingResults = await Promise.all(
+      campaignIds.map((id) => getScalingForCampaign(supabase, id)),
+    );
+    for (let i = 0; i < campaignIds.length; i++) {
+      scalingMap.set(campaignIds[i], scalingResults[i]);
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-xl font-semibold tracking-tight">Campaigns</h1>
         <p className="text-muted-foreground text-sm">
-          Sync campaigns from Meta Ads, then use local UUIDs in tracking links:{" "}
+          Sync campaigns via Meta API or upload a daily CSV export from Ads
+          Manager. Ad tracking uses{" "}
           <code className="text-xs">
-            /w?campaignid=…&amp;adsetid=…&amp;adid=…
-          </code>
+            /w?cid={"{{campaign.id}}"}&amp;aid={"{{ad.id}}"}
+          </code>{" "}
+          (set once per campaign in Meta URL parameters).
         </p>
       </div>
 
-      <MetaSyncPanel />
+      <MetaCsvUpload />
+
+      <details className="group">
+        <summary className="flex cursor-pointer items-center gap-2 rounded-lg border px-4 py-3 text-sm font-medium select-none hover:bg-muted/50">
+          <span className="transition-transform group-open:rotate-90">▶</span>
+          Meta API Sync
+        </summary>
+        <div className="mt-2">
+          <MetaSyncPanel />
+        </div>
+      </details>
 
       <Card>
         <CardHeader>
-          <CardTitle>Local campaigns (Supabase)</CardTitle>
+          <CardTitle>Campaigns</CardTitle>
           <CardDescription>
-            After syncing, these rows power attribution and reports. The Meta ID
-            column links to the original Meta campaign.
+            Campaigns synced from Meta or created via CSV uploads. Click a row to
+            drill into ad sets and ads.
           </CardDescription>
         </CardHeader>
         <CardContent>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b text-left text-muted-foreground">
-                  <th className="pb-2 pr-4 font-medium">Name</th>
-                  <th className="pb-2 pr-4 font-medium">Platform</th>
-                  <th className="pb-2 pr-4 font-medium">Status</th>
-                  <th className="pb-2 pr-4 font-medium">Meta ID</th>
-                  <th className="pb-2 font-medium">Local ID</th>
+                <tr className="bg-muted/50 border-b text-left text-xs text-muted-foreground">
+                  <th className="px-3 py-2 font-medium">Name</th>
+                  <th className="px-3 py-2 font-medium">Status</th>
+                  <th className="px-3 py-2 text-right font-medium">Spend</th>
+                  <th className="px-3 py-2 text-right font-medium">Orders</th>
+                  <th className="px-3 py-2 text-center font-medium">7d</th>
+                  <th className="px-3 py-2 text-right font-medium"> </th>
                 </tr>
               </thead>
               <tbody className="divide-y">
-                {(localCampaigns ?? []).map((c) => (
-                  <tr key={c.id} className="text-foreground">
-                    <td className="py-2 pr-4 text-sm">{c.name}</td>
-                    <td className="py-2 pr-4 capitalize">{c.platform}</td>
-                    <td className="py-2 pr-4 capitalize">{c.status}</td>
-                    <td className="py-2 pr-4 font-mono text-xs text-muted-foreground">
-                      {c.metacampaignid ?? "—"}
-                    </td>
-                    <td className="py-2 break-all font-mono text-xs text-muted-foreground">
-                      {c.id}
-                    </td>
-                  </tr>
-                ))}
+                {campaigns.map((c) => {
+                  const totalSpend = spendMap.get(c.id) ?? 0;
+                  const totalOrders = orderCountMap.get(c.id) ?? 0;
+                  const sc = scalingMap.get(c.id);
+                  return (
+                    <tr key={c.id} className="text-foreground">
+                      <td className="px-3 py-2">
+                        <Link
+                          href={`/dashboard/campaigns/${c.id}`}
+                          className="text-primary font-medium hover:underline"
+                        >
+                          {c.name}
+                        </Link>
+                        <span className="ml-2 text-xs text-muted-foreground capitalize">
+                          {c.platform}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2 text-xs capitalize">
+                        {c.status}
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums">
+                        {money(totalSpend)}
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums">
+                        {totalOrders}
+                      </td>
+                      <td className="px-3 py-2 text-center">
+                        {sc ? (
+                          <span
+                            className={scalingLabelBadgeClass(sc.label)}
+                            title={`${sc.orders} orders · ${money(sc.profit)} profit (7d)`}
+                          >
+                            {sc.label}
+                          </span>
+                        ) : (
+                          "—"
+                        )}
+                      </td>
+                      <td className="px-3 py-2 text-right">
+                        <Link
+                          href={`/dashboard/campaigns/${c.id}`}
+                          className="text-muted-foreground hover:text-foreground text-xs whitespace-nowrap"
+                        >
+                          View →
+                        </Link>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
-            {!localCampaigns?.length ? (
+            {!campaigns.length ? (
               <p className="text-muted-foreground py-6 text-center text-sm">
-                No campaigns yet — click <strong>Full sync</strong> above to
-                pull from Meta.
+                No campaigns yet — use <strong>Full sync</strong> above or
+                upload a CSV to get started.
               </p>
             ) : null}
           </div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Live Meta Ads campaigns</CardTitle>
-          <CardDescription
-            className={metaResult.ok ? undefined : "text-muted-foreground"}
-          >
-            {metaResult.ok ? (
-              <>
-                Pulled directly from the Marketing API (
-                <code className="text-xs">ads_read</code>). This read-through
-                call refreshes every page load (no cache).
-              </>
-            ) : (
-              metaResult.error
-            )}
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {!metaResult.ok && metaResult.errorCode === "missing_config" ? (
-            <ul className="text-muted-foreground list-inside list-disc space-y-1 text-xs">
-              <li>
-                <strong className="text-foreground">META_AD_ACCOUNT_ID</strong>{" "}
-                — numeric id from Ads Manager → Settings (with or without{" "}
-                <span className="font-mono">act_</span> prefix).
-              </li>
-              <li>
-                <strong className="text-foreground">
-                  META_MARKETING_ACCESS_TOKEN
-                </strong>{" "}
-                — user or system user token with{" "}
-                <span className="font-mono">ads_read</span>.
-              </li>
-            </ul>
-          ) : null}
-
-          {metaResult.ok ? (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b text-left text-muted-foreground">
-                    <th className="pb-2 pr-4 font-medium">Name</th>
-                    <th className="pb-2 pr-4 font-medium">Meta ID</th>
-                    <th className="pb-2 pr-4 font-medium">Status</th>
-                    <th className="pb-2 pr-4 font-medium">Effective</th>
-                    <th className="pb-2 pr-4 font-medium">Objective</th>
-                    <th className="pb-2 font-medium">Created</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y font-mono text-xs">
-                  {metaResult.data.map((c) => (
-                    <tr key={c.id} className="text-foreground">
-                      <td className="max-w-[200px] py-2 pr-4 font-sans text-sm">
-                        <span className="line-clamp-2" title={c.name}>
-                          {c.name}
-                        </span>
-                      </td>
-                      <td className="py-2 pr-4 break-all text-muted-foreground">
-                        {c.id}
-                      </td>
-                      <td className="py-2 pr-4 font-sans text-xs capitalize">
-                        {c.status?.toLowerCase() ?? "—"}
-                      </td>
-                      <td className="py-2 pr-4 font-sans text-xs capitalize">
-                        {(c.effective_status ?? "—")
-                          .toLowerCase()
-                          .replace(/_/g, " ")}
-                      </td>
-                      <td className="py-2 pr-4 font-sans text-xs text-muted-foreground">
-                        {c.objective ?? "—"}
-                      </td>
-                      <td className="py-2 font-sans text-xs whitespace-nowrap text-muted-foreground">
-                        {c.created_time
-                          ? new Date(c.created_time).toLocaleDateString()
-                          : "—"}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              {!metaResult.data.length ? (
-                <p className="text-muted-foreground py-6 text-center text-sm">
-                  No campaigns returned — create some in Ads Manager or check
-                  token access.
-                </p>
-              ) : null}
-            </div>
-          ) : null}
         </CardContent>
       </Card>
     </div>

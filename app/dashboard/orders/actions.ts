@@ -47,6 +47,9 @@ export async function updateOrderDetailsAction(
   const trackingRaw = String(formData.get("trackingnumber") ?? "").trim();
   const trackingnumber = trackingRaw.length > 0 ? trackingRaw : null;
 
+  const notesRaw = String(formData.get("notes") ?? "").trim();
+  const notes = notesRaw.length > 0 ? notesRaw : null;
+
   const { data: row, error: fetchErr } = await supabase
     .from("orders")
     .select("id, status")
@@ -64,6 +67,8 @@ export async function updateOrderDetailsAction(
       status: statusParsed.data,
       deliveryaddress,
       trackingnumber,
+      notes,
+      updatedat: new Date().toISOString(),
     })
     .eq("id", id);
 
@@ -89,29 +94,21 @@ export async function cancelOrderAction(
     return { error: "Invalid order" };
   }
 
-  const { data: row, error: fetchErr } = await supabase
-    .from("orders")
-    .select("status")
-    .eq("id", id)
-    .maybeSingle();
+  const { error: rpcErr } = await supabase.rpc(
+    "cancel_order_and_restore_stock",
+    { p_order_id: id },
+  );
 
-  if (fetchErr || !row) return { error: "Order not found" };
-  if (row.status === "cancelled") return { error: "Order is already cancelled." };
-  if (!["pending", "confirmed"].includes(row.status)) {
-    return {
-      error:
-        "Only pending or confirmed orders can be cancelled. Shipped inventory is not returned automatically.",
-    };
+  if (rpcErr) {
+    const msg = rpcErr.message;
+    if (msg.includes("already cancelled")) return { error: "Order is already cancelled." };
+    if (msg.includes("Only pending/confirmed"))
+      return { error: "Only pending or confirmed orders can be cancelled." };
+    return { error: msg };
   }
-
-  const { error: updErr } = await supabase
-    .from("orders")
-    .update({ status: "cancelled" })
-    .eq("id", id);
-
-  if (updErr) return { error: updErr.message };
 
   revalidatePath(`/dashboard/orders/${id}`);
   revalidatePath("/dashboard/orders");
+  revalidatePath("/dashboard/products");
   return { ok: true };
 }

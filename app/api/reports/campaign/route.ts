@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/authApi";
-import { createServiceClient } from "@/lib/supabaseServer";
+import { createClient } from "@/lib/supabaseServer";
+import { parseReportDateParam, todayISO } from "@/lib/reportDateRange";
 
 export async function GET(req: NextRequest) {
   const user = await getSessionUser();
@@ -9,11 +10,10 @@ export async function GET(req: NextRequest) {
   }
 
   const { searchParams } = new URL(req.url);
-  const from = searchParams.get("from") ?? "2024-01-01";
-  const to =
-    searchParams.get("to") ?? new Date().toISOString().split("T")[0];
+  const from = parseReportDateParam(searchParams.get("from"), "2024-01-01");
+  const to = parseReportDateParam(searchParams.get("to"), todayISO());
 
-  const supabase = createServiceClient();
+  const supabase = await createClient();
   const { data, error } = await supabase.rpc("campaignprofitreport", {
     datefrom: from,
     dateto: to,

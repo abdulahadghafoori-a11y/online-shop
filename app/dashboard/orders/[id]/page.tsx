@@ -35,16 +35,24 @@ export default async function OrderDetailPage({ params }: PageProps) {
       phone,
       status,
       createdat,
+      updatedat,
       deliveryaddress,
       trackingnumber,
       deliverycost,
+      allocatedadspend,
+      notes,
       clickid,
+      adid,
+      adsetid,
+      campaignid,
       attributionmethod,
       confidencescore,
+      campaigns ( name ),
       orderitems (
         id,
         quantity,
         saleprice,
+        product_cost_snapshot,
         products ( name, sku )
       )
     `,
@@ -54,10 +62,18 @@ export default async function OrderDetailPage({ params }: PageProps) {
 
   if (!order) notFound();
 
+  type AttributedOrder = typeof order & {
+    campaignid: string | null;
+    adsetid: string | null;
+    adid: string | null;
+  };
+  const o = order as AttributedOrder;
+
   type OI = {
     id: string;
     quantity: number;
     saleprice: number;
+    product_cost_snapshot: number | null;
     products:
       | { name: string; sku: string }
       | { name: string; sku: string }[]
@@ -69,6 +85,20 @@ export default async function OrderDetailPage({ params }: PageProps) {
     (s, l) => s + Number(l.saleprice) * l.quantity,
     0,
   );
+  const totalCogs = lines.reduce(
+    (s, l) => s + Number(l.product_cost_snapshot ?? 0) * l.quantity,
+    0,
+  );
+  const delivery = Number(order.deliverycost ?? 0);
+  const adSpend = Number(order.allocatedadspend ?? 0);
+  const revenue = lineTotal;
+  const grossProfit = revenue - totalCogs - delivery;
+  const netProfit = grossProfit - adSpend;
+
+  const campaignName =
+    order.campaigns && !Array.isArray(order.campaigns)
+      ? (order.campaigns as { name: string }).name
+      : null;
 
   const phoneDisplay = formatStoredPhoneForDisplay(order.phone);
 
@@ -89,6 +119,11 @@ export default async function OrderDetailPage({ params }: PageProps) {
         </h1>
         <p className="text-muted-foreground mt-1 text-sm">
           Created {new Date(order.createdat).toLocaleString()}
+          {order.updatedat ? (
+            <span className="ml-3">
+              · Updated {new Date(order.updatedat).toLocaleString()}
+            </span>
+          ) : null}
         </p>
       </div>
 
@@ -97,6 +132,7 @@ export default async function OrderDetailPage({ params }: PageProps) {
         status={order.status}
         deliveryaddress={order.deliveryaddress}
         trackingnumber={order.trackingnumber}
+        notes={order.notes}
       />
 
       <div className="grid gap-4 lg:grid-cols-2">
@@ -165,6 +201,39 @@ export default async function OrderDetailPage({ params }: PageProps) {
                 </span>
               </div>
             ) : null}
+            {o.campaignid ? (
+              <div className="flex justify-between gap-4">
+                <span className="text-muted-foreground">Campaign</span>
+                <Link
+                  href={`/dashboard/campaigns/${o.campaignid}`}
+                  className="text-primary max-w-[65%] truncate text-right text-xs hover:underline"
+                >
+                  {campaignName ?? "Open in dashboard"}
+                </Link>
+              </div>
+            ) : null}
+            {o.adsetid && o.campaignid ? (
+              <div className="flex justify-between gap-4">
+                <span className="text-muted-foreground">Ad set</span>
+                <Link
+                  href={`/dashboard/campaigns/${o.campaignid}/adsets/${o.adsetid}`}
+                  className="text-primary text-right text-xs hover:underline"
+                >
+                  Open ad set
+                </Link>
+              </div>
+            ) : null}
+            {o.adid && o.campaignid && o.adsetid ? (
+              <div className="flex justify-between gap-4">
+                <span className="text-muted-foreground">Ad</span>
+                <Link
+                  href={`/dashboard/campaigns/${o.campaignid}/adsets/${o.adsetid}/ads/${o.adid}`}
+                  className="text-primary text-right text-xs hover:underline"
+                >
+                  Open ad report
+                </Link>
+              </div>
+            ) : null}
           </CardContent>
         </Card>
       </div>
@@ -183,6 +252,7 @@ export default async function OrderDetailPage({ params }: PageProps) {
                   <th className="p-3 font-medium">SKU</th>
                   <th className="p-3 text-right font-medium">Qty</th>
                   <th className="p-3 text-right font-medium">Unit</th>
+                  <th className="p-3 text-right font-medium">Cost</th>
                   <th className="p-3 text-right font-medium">Line</th>
                 </tr>
               </thead>
@@ -192,6 +262,7 @@ export default async function OrderDetailPage({ params }: PageProps) {
                     ? l.products[0]
                     : l.products;
                   const unit = Number(l.saleprice);
+                  const cost = Number(l.product_cost_snapshot ?? 0);
                   const q = l.quantity;
                   return (
                     <tr key={l.id}>
@@ -203,6 +274,9 @@ export default async function OrderDetailPage({ params }: PageProps) {
                       <td className="p-3 text-right tabular-nums">
                         {money(unit)}
                       </td>
+                      <td className="text-muted-foreground p-3 text-right tabular-nums">
+                        {money(cost)}
+                      </td>
                       <td className="p-3 text-right font-medium tabular-nums">
                         {money(unit * q)}
                       </td>
@@ -212,25 +286,39 @@ export default async function OrderDetailPage({ params }: PageProps) {
               </tbody>
             </table>
           </div>
-          <div className="mt-4 flex flex-col gap-1 border-t pt-4 text-sm sm:flex-row sm:justify-end sm:gap-8">
-            <div className="flex justify-between gap-4 sm:block">
-              <span className="text-muted-foreground">Subtotal</span>
-              <span className="tabular-nums font-medium">{money(lineTotal)}</span>
+          <div className="mt-4 space-y-2 border-t pt-4 text-sm">
+            <div className="flex justify-between gap-4">
+              <span className="text-muted-foreground">Revenue</span>
+              <span className="tabular-nums font-medium">{money(revenue)}</span>
             </div>
-            <div className="flex justify-between gap-4 sm:block">
+            <div className="flex justify-between gap-4">
+              <span className="text-muted-foreground">COGS</span>
+              <span className="tabular-nums font-medium">−{money(totalCogs)}</span>
+            </div>
+            <div className="flex justify-between gap-4">
               <span className="text-muted-foreground">Delivery</span>
-              <span className="tabular-nums font-medium">
-                {money(Number(order.deliverycost ?? 0))}
+              <span className="tabular-nums font-medium">−{money(delivery)}</span>
+            </div>
+            <div className="flex justify-between gap-4 border-t pt-2">
+              <span className="font-medium">Gross profit</span>
+              <span className={`tabular-nums font-semibold ${grossProfit < 0 ? "text-destructive" : "text-emerald-600"}`}>
+                {money(grossProfit)}
               </span>
             </div>
-            <div className="flex justify-between gap-4 border-t pt-2 font-medium sm:block sm:border-t-0 sm:pt-0">
-              <span>Total</span>
-              <span className="tabular-nums">
-                {money(
-                  lineTotal + Number(order.deliverycost ?? 0),
-                )}
-              </span>
-            </div>
+            {adSpend > 0 ? (
+              <>
+                <div className="flex justify-between gap-4">
+                  <span className="text-muted-foreground">Allocated ad spend</span>
+                  <span className="tabular-nums font-medium">−{money(adSpend)}</span>
+                </div>
+                <div className="flex justify-between gap-4 border-t pt-2">
+                  <span className="font-medium">Net profit</span>
+                  <span className={`tabular-nums font-semibold ${netProfit < 0 ? "text-destructive" : "text-emerald-600"}`}>
+                    {money(netProfit)}
+                  </span>
+                </div>
+              </>
+            ) : null}
           </div>
         </CardContent>
       </Card>

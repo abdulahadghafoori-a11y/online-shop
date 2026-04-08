@@ -21,6 +21,10 @@ create table if not exists products (
   isactive           boolean default true,
   avg_cost           numeric(12,6) not null default 0,
   stock_on_hand      integer not null default 0,
+  wa_message         text,
+  description        text,
+  image_url          text,
+  reorder_point      integer not null default 0,
   createdat          timestamptz default now()
 );
 
@@ -36,28 +40,40 @@ create index if not exists idx_productcosts_createdat on productcosts (createdat
 
 -- ── AD HIERARCHY ─────────────────────────────────────────────
 create table if not exists campaigns (
-  id          uuid primary key default uuid_generate_v4(),
-  name        text not null,
-  platform    text not null default 'facebook'
+  id              uuid primary key default uuid_generate_v4(),
+  name            text not null,
+  platform        text not null default 'facebook'
     check (platform in ('facebook', 'instagram', 'other')),
-  status      text not null default 'active'
+  status          text not null default 'active'
     check (status in ('active', 'paused', 'stopped')),
-  createdat   timestamptz default now()
+  metacampaignid  text,
+  createdat       timestamptz default now()
 );
+
+create unique index if not exists idx_campaigns_metacampaignid
+  on campaigns (metacampaignid) where metacampaignid is not null;
 
 create table if not exists adsets (
   id           uuid primary key default uuid_generate_v4(),
   campaignid   uuid references campaigns (id) on delete cascade,
   name         text not null,
+  metaadsetid  text,
   createdat    timestamptz default now()
 );
+
+create unique index if not exists idx_adsets_metaadsetid
+  on adsets (metaadsetid) where metaadsetid is not null;
 
 create table if not exists ads (
   id          uuid primary key default uuid_generate_v4(),
   adsetid     uuid references adsets (id) on delete cascade,
   name        text not null,
+  metaadid    text,
   createdat   timestamptz default now()
 );
+
+create unique index if not exists idx_ads_metaadid
+  on ads (metaadid) where metaadid is not null;
 
 -- ── CLICKS ───────────────────────────────────────────────────
 create table if not exists clicks (
@@ -70,6 +86,7 @@ create table if not exists clicks (
   utmsource    text,
   utmcampaign  text,
   utmcontent   text,
+  product      text,
   ipaddress    text,
   useragent    text,
   devicetype   text default 'unknown'
@@ -100,23 +117,30 @@ create table if not exists orders (
   leadid             uuid references leads (id) on delete set null,
   clickid            text references clicks (clickid) on delete set null,
   adid               uuid references ads (id) on delete set null,
+  adsetid            uuid references adsets (id) on delete set null,
   campaignid         uuid references campaigns (id) on delete set null,
   phone              text not null,
   deliveryaddress    text not null default 'Kabul',
   trackingnumber     text,
   deliverycost       numeric(10, 2) not null default 0,
   allocatedadspend   numeric(10, 2) default 0,
+  meta_sent          boolean not null default false,
   status             text not null default 'pending'
     check (status in ('pending', 'confirmed', 'shipped', 'delivered', 'cancelled')),
   attributionmethod  text,
   confidencescore    numeric(3, 2) default 0,
   createdby          uuid references users (id) on delete set null,
-  createdat          timestamptz default now()
+  notes              text,
+  createdat          timestamptz default now(),
+  updatedat          timestamptz
 );
+
+create index if not exists idx_orders_meta_sent on orders (meta_sent) where meta_sent = false;
 
 create index if not exists idx_orders_clickid on orders (clickid);
 create index if not exists idx_orders_phone on orders (phone);
 create index if not exists idx_orders_campaignid on orders (campaignid);
+create index if not exists idx_orders_adsetid on orders (adsetid);
 create index if not exists idx_orders_createdat on orders (createdat);
 
 create table if not exists orderitems (
@@ -170,19 +194,58 @@ select
 from products p;
 
 grant select on inventorybalance to authenticated;
+grant select on dailyadstats to authenticated, anon;
 
--- ── AD SPEND ─────────────────────────────────────────────────
-create table if not exists dailyadstats (
-  id            uuid primary key default uuid_generate_v4(),
-  campaignid    uuid references campaigns (id) on delete cascade,
+-- ── AD SPEND (granular: campaign / adset / ad per day) ───────
+create table if not exists daily_ad_insights (
+  id            uuid primary key default gen_random_uuid(),
   date          date not null,
-  spend         numeric(10, 2) default 0,
-  clicks        int default 0,
-  impressions   int default 0,
-  unique (campaignid, date)
+  campaign_id   uuid not null references campaigns(id) on delete cascade,
+  adset_id      uuid references adsets(id) on delete cascade,
+  ad_id         uuid references ads(id) on delete cascade,
+  spend         numeric(14, 2) not null default 0,
+  clicks        int not null default 0,
+  impressions   bigint not null default 0,
+  extra         jsonb not null default '{}'::jsonb,
+  source        text not null default 'manual',
+  created_at    timestamptz not null default now(),
+  updated_at    timestamptz not null default now(),
+  dedupe_key    text not null generated always as (
+    case
+      when ad_id is not null then 'a|' || ad_id::text || '|' || (date - date '1970-01-01')::text
+      when adset_id is not null then 's|' || adset_id::text || '|' || (date - date '1970-01-01')::text
+      else 'c|' || campaign_id::text || '|' || (date - date '1970-01-01')::text
+    end
+  ) stored,
+  constraint daily_ad_insights_ad_requires_adset
+    check (ad_id is null or adset_id is not null)
 );
 
-create index if not exists idx_dailyadstats_date on dailyadstats (date);
+create unique index if not exists idx_daily_ad_insights_dedupe_key
+  on daily_ad_insights (dedupe_key);
+create index if not exists idx_daily_ad_insights_campaign_date
+  on daily_ad_insights (campaign_id, date);
+create index if not exists idx_daily_ad_insights_date
+  on daily_ad_insights (date);
+
+-- Backward-compatible rollup view (campaign grain)
+create or replace view dailyadstats as
+select
+  dai.campaign_id as campaignid,
+  dai.date,
+  sum(dai.spend)::numeric(14, 2) as spend,
+  sum(dai.clicks)::int as clicks,
+  least(coalesce(sum(dai.impressions), 0), 2147483647::numeric)::int as impressions
+from daily_ad_insights dai
+group by dai.campaign_id, dai.date;
+
+-- ── EXPENSE CATEGORIES ───────────────────────────────────────
+create table if not exists expense_categories (
+  id         uuid primary key default gen_random_uuid(),
+  name       text not null,
+  created_at timestamptz not null default now(),
+  constraint expense_categories_name_unique unique (name)
+);
 
 -- ── EXPENSES ─────────────────────────────────────────────────
 create table if not exists expenses (
@@ -230,8 +293,9 @@ alter table orderitems enable row level security;
 alter table purchases enable row level security;
 alter table purchaseitems enable row level security;
 alter table inventorytransactions enable row level security;
-alter table dailyadstats enable row level security;
+alter table daily_ad_insights enable row level security;
 alter table expenses enable row level security;
+alter table suppliers enable row level security;
 alter table conversionevents enable row level security;
 alter table deliveryzones enable row level security;
 
@@ -243,7 +307,7 @@ begin
   foreach t in array array[
     'users', 'products', 'productcosts', 'campaigns', 'adsets', 'ads',
     'clicks', 'leads', 'orders', 'orderitems', 'purchases', 'purchaseitems',
-    'inventorytransactions', 'dailyadstats', 'expenses',
+    'inventorytransactions', 'daily_ad_insights', 'expenses', 'suppliers',
     'conversionevents', 'deliveryzones'
   ]
   loop
@@ -259,12 +323,8 @@ begin
 end $$;
 
 drop policy if exists "Public insert clicks" on clicks;
-create policy "Public insert clicks" on clicks
-  for insert to anon, authenticated with check (true);
-
 drop policy if exists "Public insert leads" on leads;
-create policy "Public insert leads" on leads
-  for insert to anon, authenticated with check (true);
+-- Anon cannot insert clicks/leads; /w uses service role; dashboard uses authenticated "Auth access".
 
 -- ── FUNCTIONS ────────────────────────────────────────────────
 create or replace function getunitcost(p_productid uuid, p_at timestamptz default now())
@@ -303,6 +363,7 @@ returns table (
 )
 language sql
 stable
+set search_path = public
 as $$
   with spendagg as (
     select campaignid, coalesce(sum(spend), 0) as totalspend
@@ -310,17 +371,29 @@ as $$
     where date between datefrom::date and dateto::date
     group by campaignid
   ),
-  orderagg as (
+  ord_rows as (
     select
       o.campaignid,
-      count(distinct o.id) as totalorders,
-      coalesce(sum(oi.saleprice * oi.quantity), 0) as totalrevenue
+      o.id as order_id,
+      coalesce((
+        select sum(oi.saleprice * oi.quantity)
+        from orderitems oi
+        where oi.orderid = o.id
+      ), 0) as rev,
+      orderprofit(o.id) as contrib
     from orders o
-    join orderitems oi on oi.orderid = o.id
     where o.createdat >= datefrom::timestamptz
       and o.createdat < (dateto::date + interval '1 day')::timestamptz
       and o.status != 'cancelled'
-    group by o.campaignid
+  ),
+  orderagg as (
+    select
+      r.campaignid,
+      count(*)::bigint as totalorders,
+      coalesce(sum(r.rev), 0) as totalrevenue,
+      coalesce(sum(r.contrib), 0) as contribution
+    from ord_rows r
+    group by r.campaignid
   )
   select
     c.id as campaignid,
@@ -328,13 +401,13 @@ as $$
     coalesce(s.totalspend, 0) as spend,
     coalesce(a.totalorders, 0) as orders,
     coalesce(a.totalrevenue, 0) as revenue,
-    coalesce(a.totalrevenue, 0) - coalesce(s.totalspend, 0) as profit,
+    coalesce(a.contribution, 0) - coalesce(s.totalspend, 0) as profit,
     case when coalesce(s.totalspend, 0) > 0
       then coalesce(a.totalrevenue, 0) / s.totalspend
-      else 0 end as roas,
+      else 0::numeric end as roas,
     case when coalesce(a.totalorders, 0) > 0
-      then coalesce(s.totalspend, 0) / a.totalorders
-      else 0 end as cpa
+      then coalesce(s.totalspend, 0) / a.totalorders::numeric
+      else 0::numeric end as cpa
   from campaigns c
   left join spendagg s on s.campaignid = c.id
   left join orderagg a on a.campaignid = c.id
@@ -440,15 +513,24 @@ create unique index if not exists uq_meta_event_logs_dedup
   on meta_event_logs(event_name, event_id)
   where status = 'sent';
 
+create table if not exists suppliers (
+  id          uuid primary key default gen_random_uuid(),
+  name        text not null,
+  created_at  timestamptz not null default now(),
+  constraint suppliers_name_unique unique (name)
+);
+
 create table if not exists purchase_orders (
-  id             uuid primary key default gen_random_uuid(),
-  supplier_name  text not null,
-  status         text not null default 'draft'
+  id              uuid primary key default gen_random_uuid(),
+  supplier_id     uuid not null references suppliers(id),
+  status          text not null default 'draft'
     check (status in ('draft','received','cancelled')),
-  notes          text,
-  created_by     uuid references users(id),
-  created_at     timestamptz not null default now(),
-  received_at    timestamptz
+  notes           text,
+  created_by      uuid references users(id),
+  created_at      timestamptz not null default now(),
+  received_at     timestamptz,
+  fx_afn_per_usd  numeric(14,6),
+  fx_cny_per_usd  numeric(14,6)
 );
 
 create table if not exists purchase_order_items (
@@ -699,6 +781,67 @@ begin
 end;
 $$;
 
+create or replace function public.create_order_and_apply_items(
+  p_phone text,
+  p_clickid text,
+  p_adid uuid,
+  p_adsetid uuid,
+  p_campaignid uuid,
+  p_deliveryaddress text,
+  p_trackingnumber text,
+  p_deliverycost numeric,
+  p_status text,
+  p_attributionmethod text,
+  p_confidencescore numeric,
+  p_allocatedadspend numeric,
+  p_createdby uuid,
+  p_items jsonb,
+  p_allow_negative boolean
+)
+returns uuid
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_id uuid;
+begin
+  insert into orders (
+    phone,
+    clickid,
+    adid,
+    adsetid,
+    campaignid,
+    deliveryaddress,
+    trackingnumber,
+    deliverycost,
+    status,
+    attributionmethod,
+    confidencescore,
+    allocatedadspend,
+    createdby
+  ) values (
+    p_phone,
+    p_clickid,
+    p_adid,
+    p_adsetid,
+    p_campaignid,
+    p_deliveryaddress,
+    p_trackingnumber,
+    p_deliverycost,
+    p_status,
+    p_attributionmethod,
+    p_confidencescore,
+    p_allocatedadspend,
+    p_createdby
+  )
+  returning id into v_id;
+
+  perform public.apply_order_sales_and_items(v_id, p_items, p_allow_negative);
+  return v_id;
+end;
+$$;
+
 create or replace function public.apply_inventory_adjustment(
   p_product_id uuid,
   p_qty_delta integer,
@@ -744,23 +887,177 @@ $$;
 
 grant execute on function public.apply_stock_receipt(uuid, integer, numeric, numeric, numeric, text, date) to authenticated, service_role;
 grant execute on function public.apply_order_sales_and_items(uuid, jsonb, boolean) to authenticated, service_role;
+grant execute on function public.create_order_and_apply_items(
+  text, text, uuid, uuid, uuid, text, text, numeric, text, text, numeric, numeric, uuid, jsonb, boolean
+) to authenticated, service_role;
 grant execute on function public.apply_inventory_adjustment(uuid, integer, uuid) to authenticated, service_role;
 
 alter table stock_receipts enable row level security;
 alter table inventory_movements enable row level security;
 
 drop policy if exists "Auth access" on stock_receipts;
-create policy "Auth access" on stock_receipts
-  for all to authenticated using (true) with check (true);
+drop policy if exists "stock_receipts_select" on stock_receipts;
+create policy "stock_receipts_select" on stock_receipts
+  for select to authenticated using (true);
 
 drop policy if exists "Auth access" on inventory_movements;
-create policy "Auth access" on inventory_movements
-  for all to authenticated using (true) with check (true);
+drop policy if exists "inventory_movements_select" on inventory_movements;
+create policy "inventory_movements_select" on inventory_movements
+  for select to authenticated using (true);
 
-grant select, insert, update, delete on stock_receipts to authenticated;
-grant select, insert, update, delete on inventory_movements to authenticated;
-</think>
+revoke insert, update, delete on stock_receipts from authenticated;
+revoke insert, update, delete on inventory_movements from authenticated;
+grant select on stock_receipts to authenticated;
+grant select on inventory_movements to authenticated;
 
+-- ── Cancel order with stock reversal ─────────────────────────
+create or replace function public.cancel_order_and_restore_stock(p_order_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_status text;
+  r record;
+begin
+  select status into v_status from orders where id = p_order_id for update;
+  if not found then raise exception 'Order not found'; end if;
+  if v_status = 'cancelled' then raise exception 'Order is already cancelled'; end if;
+  if v_status not in ('pending', 'confirmed') then
+    raise exception 'Only pending/confirmed orders can be cancelled (status: %)', v_status;
+  end if;
 
-<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>
-Read
+  for r in select oi.productid, oi.quantity, oi.product_cost_snapshot
+           from orderitems oi where oi.orderid = p_order_id
+  loop
+    update products set stock_on_hand = stock_on_hand + r.quantity where id = r.productid;
+    insert into inventory_movements (product_id, movement_type, qty, unit_cost_snapshot, reference_type, reference_id)
+    values (r.productid, 'ADJUSTMENT', r.quantity, r.product_cost_snapshot, 'order_cancel', p_order_id);
+  end loop;
+
+  update orders set status = 'cancelled', updatedat = now() where id = p_order_id;
+end;
+$$;
+
+grant execute on function public.cancel_order_and_restore_stock(uuid) to authenticated, service_role;
+
+-- ── Atomic PO receive ────────────────────────────────────────
+create or replace function public.receive_purchase_order(p_po_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_status text;
+  r record;
+begin
+  select status into v_status from purchase_orders where id = p_po_id for update;
+  if not found then raise exception 'Purchase order not found'; end if;
+  if v_status != 'draft' then
+    raise exception 'Only draft POs can be received (status: %)', v_status;
+  end if;
+
+  for r in select product_id, quantity, base_cost, shipping_cost_per_unit, packaging_cost_per_unit
+           from purchase_order_items where purchase_order_id = p_po_id
+  loop
+    perform public.apply_stock_receipt(
+      r.product_id,
+      greatest(1, round(r.quantity)::integer),
+      r.base_cost,
+      r.shipping_cost_per_unit,
+      r.packaging_cost_per_unit,
+      'purchase_order:' || p_po_id::text,
+      current_date
+    );
+  end loop;
+
+  update purchase_orders set status = 'received', received_at = now() where id = p_po_id;
+end;
+$$;
+
+grant execute on function public.receive_purchase_order(uuid) to authenticated, service_role;
+
+-- ── Proportional ad-spend allocation ─────────────────────────
+create or replace function public.allocate_ad_spend_for_order(p_order_id uuid)
+returns numeric
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_campaign uuid;
+  v_date date;
+  v_day_spend numeric;
+  v_day_orders bigint;
+  v_allocated numeric;
+begin
+  select campaignid, createdat::date into v_campaign, v_date
+  from orders where id = p_order_id;
+
+  if v_campaign is null then
+    update orders set allocatedadspend = 0 where id = p_order_id;
+    return 0;
+  end if;
+
+  select coalesce(sum(dai.spend), 0) into v_day_spend
+  from daily_ad_insights dai
+  where dai.campaign_id = v_campaign and dai.date = v_date;
+
+  select count(*) into v_day_orders
+  from orders o
+  where o.campaignid = v_campaign and o.createdat::date = v_date and o.status != 'cancelled';
+
+  if v_day_orders <= 0 then v_allocated := 0;
+  else v_allocated := round(v_day_spend / v_day_orders, 2);
+  end if;
+
+  update orders set allocatedadspend = v_allocated where id = p_order_id;
+  return v_allocated;
+end;
+$$;
+
+grant execute on function public.allocate_ad_spend_for_order(uuid) to authenticated, service_role;
+
+-- ── Batch ad-spend re-allocation (campaign + day) ────────────
+create or replace function public.reallocate_campaign_day_ad_spend(
+  p_campaign_id uuid,
+  p_date date
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_day_spend numeric;
+  v_day_orders bigint;
+  v_allocated numeric;
+begin
+  if p_campaign_id is null then return; end if;
+
+  select coalesce(sum(dai.spend), 0) into v_day_spend
+  from daily_ad_insights dai
+  where dai.campaign_id = p_campaign_id and dai.date = p_date;
+
+  select count(*) into v_day_orders
+  from orders o
+  where o.campaignid = p_campaign_id
+    and o.createdat::date = p_date
+    and o.status != 'cancelled';
+
+  if v_day_orders <= 0 then v_allocated := 0;
+  else v_allocated := round(v_day_spend / v_day_orders, 2);
+  end if;
+
+  update orders
+  set allocatedadspend = v_allocated
+  where campaignid = p_campaign_id
+    and createdat::date = p_date
+    and status != 'cancelled';
+end;
+$$;
+
+grant execute on function public.reallocate_campaign_day_ad_spend(uuid, date) to authenticated, service_role;
+

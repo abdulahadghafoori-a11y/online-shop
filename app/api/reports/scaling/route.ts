@@ -1,13 +1,11 @@
 import { NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/authApi";
-import { createServiceClient } from "@/lib/supabaseServer";
-import type { ScalingLabel, ScalingRow } from "@/types";
-
-function label(profitPerOrder: number): ScalingLabel {
-  if (profitPerOrder >= 15) return "SCALE";
-  if (profitPerOrder > 0) return "WATCH";
-  return "KILL";
-}
+import { createClient } from "@/lib/supabaseServer";
+import {
+  SCALING_WINDOW_DAYS,
+  buildScalingSnapshot,
+} from "@/lib/scalingReport";
+import type { ScalingRow } from "@/types";
 
 export async function GET() {
   const user = await getSessionUser();
@@ -15,10 +13,10 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const supabase = createServiceClient();
+  const supabase = await createClient();
   const since = new Date();
-  since.setDate(since.getDate() - 7);
-  const sinceDate = since.toISOString().split("T")[0];
+  since.setDate(since.getDate() - SCALING_WINDOW_DAYS);
+  const sinceDate = since.toISOString().split("T")[0]!;
 
   const { data: stats, error } = await supabase
     .from("dailyadstats")
@@ -36,6 +34,8 @@ export async function GET() {
       campaignname: string;
       spend: number;
       revenue: number;
+      cogs: number;
+      delivery: number;
       orders: number;
     }
   >();
@@ -53,6 +53,8 @@ export async function GET() {
         campaignname: c?.name ?? "Unknown",
         spend: 0,
         revenue: 0,
+        cogs: 0,
+        delivery: 0,
         orders: 0,
       });
     }
@@ -64,39 +66,47 @@ export async function GET() {
   if (campaignIds.length > 0) {
     const { data: orderData } = await supabase
       .from("orders")
-      .select("campaignid, orderitems(saleprice, quantity)")
+      .select("campaignid, deliverycost, orderitems(saleprice, quantity, product_cost_snapshot)")
       .in("campaignid", campaignIds)
       .neq("status", "cancelled")
       .gte("createdat", since.toISOString());
 
-    type OI = { saleprice: number; quantity: number };
+    type OI = { saleprice: number; quantity: number; product_cost_snapshot: number };
     for (const o of orderData ?? []) {
       const cid = o.campaignid as string;
       const e = map.get(cid);
       if (!e) continue;
       e.orders += 1;
+      e.delivery += Number(o.deliverycost ?? 0);
       const items = o.orderitems as OI[] | null;
-      e.revenue +=
-        items?.reduce((s, i) => s + i.saleprice * i.quantity, 0) ?? 0;
+      for (const i of items ?? []) {
+        e.revenue += Number(i.saleprice) * Number(i.quantity);
+        e.cogs += Number(i.product_cost_snapshot) * Number(i.quantity);
+      }
     }
   }
 
   const result: ScalingRow[] = Array.from(map.values()).map((c) => {
-    const profit = c.revenue - c.spend;
-    const profitPerOrder = c.orders > 0 ? profit / c.orders : 0;
-    const cpa = c.orders > 0 ? c.spend / c.orders : 0;
-    const roas = c.spend > 0 ? c.revenue / c.spend : 0;
+    const snap = buildScalingSnapshot(
+      c.spend,
+      c.revenue,
+      c.orders,
+      SCALING_WINDOW_DAYS,
+      sinceDate,
+      c.cogs,
+      c.delivery,
+    );
     return {
       campaignid: c.campaignid,
       campaignname: c.campaignname,
-      spend: c.spend,
-      revenue: c.revenue,
-      profit,
-      orders: c.orders,
-      roas,
-      cpa,
-      profitperorder: profitPerOrder,
-      label: label(profitPerOrder),
+      spend: snap.spend,
+      revenue: snap.revenue,
+      profit: snap.profit,
+      orders: snap.orders,
+      roas: snap.roas,
+      cpa: snap.cpa,
+      profitperorder: snap.profitperorder,
+      label: snap.label,
     };
   });
 

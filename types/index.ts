@@ -85,10 +85,12 @@ export interface Order {
   leadid: string | null;
   clickid: string | null;
   adid: string | null;
+  adsetid: string | null;
   campaignid: string | null;
   phone: string;
   deliverycost: number;
   allocatedadspend: number;
+  meta_sent: boolean;
   status: OrderStatus;
   attributionmethod: AttributionMethod | null;
   confidencescore: number;
@@ -126,17 +128,6 @@ export interface DailyAdStat {
   impressions: number;
 }
 
-export interface TrackClickPayload {
-  campaignid?: string;
-  adsetid?: string;
-  adid?: string;
-  fbclid?: string;
-  utmsource?: string;
-  utmcampaign?: string;
-  utmcontent?: string;
-  productname?: string;
-}
-
 export interface OrderItemInput {
   productid: string;
   quantity: number;
@@ -157,6 +148,8 @@ export interface CreateOrderPayload {
 export interface AttributionResult {
   clickid: string | null;
   adid: string | null;
+  /** Populated when click or ad path resolves (persisted on orders). */
+  adsetid: string | null;
   campaignid: string | null;
   method: AttributionMethod;
   confidence: number;
@@ -261,12 +254,14 @@ export type PurchaseOrderStatus = "draft" | "received" | "cancelled";
 
 export interface PurchaseOrder {
   id: string;
-  supplier_name: string;
+  supplier_id: string;
   status: PurchaseOrderStatus;
   notes: string | null;
   created_by: string | null;
   created_at: string;
   received_at: string | null;
+  fx_afn_per_usd: number | null;
+  fx_cny_per_usd: number | null;
 }
 
 export interface PurchaseOrderItem {

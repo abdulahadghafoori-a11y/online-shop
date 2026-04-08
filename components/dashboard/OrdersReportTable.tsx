@@ -13,6 +13,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { useAppCurrency } from "@/components/dashboard/CurrencyProvider";
+import { CsvExportButton } from "@/components/dashboard/CsvExportButton";
 import type { OrderProfitReportRow } from "@/types";
 
 export function OrdersReportTable() {
@@ -109,6 +110,23 @@ export function OrdersReportTable() {
           <Button type="button" onClick={() => void load()} disabled={loading}>
             {loading ? "Loading…" : "Run report"}
           </Button>
+          {rows.length > 0 && (
+            <CsvExportButton
+              endpoint={`/api/reports/orders?from=${fromDate}&to=${toDate}`}
+              filename={`orders-report-${fromDate}-${toDate}`}
+              columns={[
+                { key: "created_at", label: "Date" },
+                { key: "phone", label: "Phone" },
+                { key: "status", label: "Status" },
+                { key: "line_items", label: "Lines" },
+                { key: "revenue", label: "Revenue" },
+                { key: "cogs", label: "COGS" },
+                { key: "delivery_cost", label: "Delivery" },
+                { key: "allocated_ad_spend", label: "Ad Alloc" },
+                { key: "profit", label: "Profit" },
+              ]}
+            />
+          )}
         </div>
 
         {rows.length > 0 ? (

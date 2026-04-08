@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import {
   createPurchaseOrderAction,
   receivePurchaseOrderAction,
+  cancelPurchaseOrderAction,
   type PurchaseActionState,
 } from "@/app/dashboard/purchases/actions";
 import { useAppCurrency } from "@/components/dashboard/CurrencyProvider";
@@ -19,6 +20,14 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Plus, Trash2 } from "lucide-react";
 
 type ProductOption = { id: string; name: string; sku: string };
@@ -160,12 +169,12 @@ export function PurchaseFormSection({
                   <span className="text-muted-foreground text-xs">Qty</span>
                   <Input
                     type="number"
-                    min={0.01}
-                    step="any"
+                    min={1}
+                    step="1"
                     value={item.quantity}
                     onChange={(e) =>
                       updateLine(idx, {
-                        quantity: Number(e.target.value),
+                        quantity: Math.max(1, Math.round(Number(e.target.value))),
                       })
                     }
                     required
@@ -248,13 +257,17 @@ export function PurchaseFormSection({
 
 export function ReceiveButton({ poId }: { poId: string }) {
   const router = useRouter();
+  const [open, setOpen] = useState(false);
   const [state, action, pending] = useActionState(
     receivePurchaseOrderAction,
     initial
   );
 
   useEffect(() => {
-    if (state.ok) router.refresh();
+    if (state.ok) {
+      setOpen(false);
+      router.refresh();
+    }
   }, [state.ok, router]);
 
   useEffect(() => {
@@ -263,11 +276,102 @@ export function ReceiveButton({ poId }: { poId: string }) {
   }, [state]);
 
   return (
-    <form action={action}>
-      <input type="hidden" name="id" value={poId} />
-      <Button type="submit" size="sm" variant="outline" disabled={pending}>
-        {pending ? "Receiving…" : "Receive"}
+    <>
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        onClick={() => setOpen(true)}
+      >
+        Receive
       </Button>
-    </form>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent showClose>
+          <DialogHeader>
+            <DialogTitle>Receive this purchase order?</DialogTitle>
+            <DialogDescription>
+              Receiving will update inventory and WAC for all line items.
+              This cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <form action={action}>
+            <input type="hidden" name="id" value={poId} />
+            <DialogFooter className="gap-2 sm:justify-end">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setOpen(false)}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" disabled={pending}>
+                {pending ? "Receiving…" : "Confirm receive"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
+export function CancelPOButton({ poId }: { poId: string }) {
+  const router = useRouter();
+  const [open, setOpen] = useState(false);
+  const [state, action, pending] = useActionState(
+    cancelPurchaseOrderAction,
+    initial
+  );
+
+  useEffect(() => {
+    if (state.ok) {
+      setOpen(false);
+      router.refresh();
+    }
+  }, [state.ok, router]);
+
+  useEffect(() => {
+    if (state.error) toast.error(state.error);
+    else if (state.ok) toast.success("Purchase order cancelled");
+  }, [state]);
+
+  return (
+    <>
+      <Button
+        type="button"
+        size="sm"
+        variant="ghost"
+        className="text-destructive"
+        onClick={() => setOpen(true)}
+      >
+        Cancel
+      </Button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent showClose>
+          <DialogHeader>
+            <DialogTitle>Cancel this purchase order?</DialogTitle>
+            <DialogDescription>
+              The PO will be marked as cancelled. No stock changes will be
+              made. This cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <form action={action}>
+            <input type="hidden" name="id" value={poId} />
+            <DialogFooter className="gap-2 sm:justify-end">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setOpen(false)}
+              >
+                Keep PO
+              </Button>
+              <Button type="submit" variant="destructive" disabled={pending}>
+                {pending ? "Cancelling…" : "Confirm cancel"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }

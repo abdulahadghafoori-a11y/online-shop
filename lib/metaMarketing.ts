@@ -318,18 +318,21 @@ export async function syncInsightsToSupabase(
 
   let upserted = 0;
   for (const row of result.data) {
-    const campaignid = campaignMap.get(row.campaign_id) ?? null;
-    if (!campaignid) continue;
+    const campaign_id = campaignMap.get(row.campaign_id) ?? null;
+    if (!campaign_id) continue;
 
-    const { error } = await supabase.from("dailyadstats").upsert(
+    const { error } = await supabase.from("daily_ad_insights").upsert(
       {
-        campaignid,
+        campaign_id,
+        adset_id: null,
+        ad_id: null,
         date: row.date_start,
         spend: parseFloat(row.spend) || 0,
         clicks: parseInt(row.clicks, 10) || 0,
         impressions: parseInt(row.impressions, 10) || 0,
+        source: "meta_api",
       },
-      { onConflict: "campaignid,date", ignoreDuplicates: false }
+      { onConflict: "dedupe_key", ignoreDuplicates: false }
     );
     if (!error) upserted++;
   }

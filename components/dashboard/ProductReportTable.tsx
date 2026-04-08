@@ -13,6 +13,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { useAppCurrency } from "@/components/dashboard/CurrencyProvider";
+import { CsvExportButton } from "@/components/dashboard/CsvExportButton";
 import type { ProductReport } from "@/types";
 
 export function ProductReportTable() {
@@ -99,6 +100,19 @@ export function ProductReportTable() {
           <Button type="button" onClick={() => void load()} disabled={loading}>
             {loading ? "Loading…" : "Run report"}
           </Button>
+          {rows.length > 0 && (
+            <CsvExportButton
+              endpoint={`/api/reports/product?from=${fromDate}&to=${toDate}`}
+              filename={`product-report-${fromDate}-${toDate}`}
+              columns={[
+                { key: "productname", label: "Product" },
+                { key: "unitssold", label: "Units Sold" },
+                { key: "revenue", label: "Revenue" },
+                { key: "cost", label: "COGS" },
+                { key: "profit", label: "Profit" },
+              ]}
+            />
+          )}
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">

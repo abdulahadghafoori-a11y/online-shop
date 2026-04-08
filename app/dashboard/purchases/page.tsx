@@ -17,13 +17,26 @@ import {
 import { PurchaseOrdersTable } from "@/components/dashboard/PurchaseOrdersTable";
 import type { PurchaseReportRow } from "@/types";
 
-export default async function PurchasesPage() {
+const VALID_STATUSES = ["draft", "received", "cancelled"];
+
+type Props = {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+};
+
+export default async function PurchasesPage({ searchParams }: Props) {
+  const sp = await searchParams;
+  const statusFilter =
+    typeof sp.status === "string" && VALID_STATUSES.includes(sp.status)
+      ? sp.status
+      : undefined;
+
   const supabase = await createClient();
 
-  const { data: orders } = await supabase
+  let query = supabase
     .from("purchase_orders")
     .select(
-      `id, supplier_name, status, created_at, received_at,
+      `id, supplier_id, status, created_at, received_at,
+      suppliers ( name ),
       purchase_order_items (
         product_id,
         quantity,
@@ -37,6 +50,10 @@ export default async function PurchasesPage() {
     .order("created_at", { ascending: false })
     .limit(50);
 
+  if (statusFilter) query = query.eq("status", statusFilter);
+
+  const { data: orders } = await query;
+
   const { data: products } = await supabase
     .from("products")
     .select("id, name, sku")
@@ -47,9 +64,11 @@ export default async function PurchasesPage() {
     const rawItems = (po.purchase_order_items ?? []) as RawPurchaseOrderItem[];
     const lines = rawItems.map(mapPurchaseOrderItemToLine);
     const sums = summarizePurchaseLines(lines);
+    const supRaw = po.suppliers as { name: string } | { name: string }[] | null;
+    const supName = Array.isArray(supRaw) ? supRaw[0]?.name : supRaw?.name;
     return {
       id: po.id as string,
-      supplier_name: po.supplier_name as string,
+      supplier_name: supName ?? "—",
       status: po.status as string,
       created_at: po.created_at as string,
       received_at: (po.received_at as string | null) ?? null,
@@ -81,7 +100,10 @@ export default async function PurchasesPage() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <PurchaseOrdersTable orders={purchaseRows} />
+          <PurchaseOrdersTable
+            orders={purchaseRows}
+            currentStatus={statusFilter ?? ""}
+          />
         </CardContent>
       </Card>
     </div>

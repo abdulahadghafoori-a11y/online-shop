@@ -1,6 +1,8 @@
 "use client";
 
 import { useActionState, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import { toast } from "sonner";
 import {
   createStockAdjustmentAction,
   type AdjustmentActionState,
@@ -24,6 +26,7 @@ export function StockAdjustmentForm({
 }: {
   products: ProductOption[];
 }) {
+  const router = useRouter();
   const [state, action, pending] = useActionState(
     createStockAdjustmentAction,
     initial
@@ -37,8 +40,12 @@ export function StockAdjustmentForm({
       setProductid("");
       setQty("");
       setReason("");
+      toast.success("Stock adjustment saved");
+      router.refresh();
+    } else if (state.error) {
+      toast.error(state.error);
     }
-  }, [state.ok]);
+  }, [state, router]);
 
   return (
     <Card>
@@ -93,13 +100,6 @@ export function StockAdjustmentForm({
               placeholder="Damaged, returned, count correction…"
             />
           </div>
-
-          {state.error && (
-            <p className="text-destructive text-sm">{state.error}</p>
-          )}
-          {state.ok && (
-            <p className="text-emerald-600 text-sm">Adjustment saved.</p>
-          )}
 
           <Button type="submit" disabled={pending} className="w-fit">
             {pending ? "Saving…" : "Submit adjustment"}

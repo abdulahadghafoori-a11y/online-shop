@@ -101,6 +101,7 @@ export function MetaSyncPanel() {
         <CardDescription>
           Pull campaigns, ad sets, ads, and daily spend from the Meta Marketing
           API into your local Supabase tables. Sync is idempotent (upsert).
+          Admin role required.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">

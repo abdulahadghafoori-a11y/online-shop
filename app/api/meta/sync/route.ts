@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getSessionUser } from "@/lib/authApi";
+import { requireAdminApiUser } from "@/lib/authApi";
 import {
   syncCampaignsToSupabase,
   syncAdSetsToSupabase,
@@ -28,9 +28,9 @@ function daysAgoISO(n: number) {
 }
 
 export async function POST(req: NextRequest) {
-  const user = await getSessionUser();
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const gate = await requireAdminApiUser();
+  if (!gate.ok) {
+    return NextResponse.json({ error: gate.message }, { status: gate.status });
   }
 
   const body = (await req.json().catch(() => ({}))) as {
